@@ -1,0 +1,30 @@
+{
+  "marketplace": "content_rewards",
+  "submission_url": "https://contentrewards.com/discover",
+  "approval_rate_pct": null,
+  "allowed_platforms": [
+    "tiktok",
+    "instagram",
+    "youtube",
+    "x"
+  ],
+  "disclosure_text": "#ad",
+  "is_political": false,
+  "source_urls": [],
+  "content_kind": "game",
+  "footage_mode": "streamer_stream",
+  "allow_stream_download": false,
+  "unpaid_viewer_countries": [],
+  "name": "AsianJeff Clipping (Reach)",
+  "url": "https://contentrewards.com/discover",
+  "cpm_usd": 1.0,
+  "min_payout_usd": 10.0,
+  "min_views_per_post": 10000,
+  "per_clip_cap_usd": 300.0,
+  "budget_remaining_usd": 1778.0,
+  "budget_total_usd": 2500.0,
+  "participants": 12,
+  "required_tags": [],
+  "priority": 1,
+  "rules_notes": "Read from the public campaign card on 2026-11-22. Footage is AsianJeff's GTA 6 Twitch playthrough from 19 Nov 2026. NOT YET READ: brief, rules, footage links and any download permission (hidden until joined). url is the Discover page: replace url/submission_url with the campaign page after joining. min_views_per_post derived: $10.00 / $1.00 per 1,000 = 10,000."
+}

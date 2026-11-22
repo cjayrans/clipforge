@@ -1,0 +1,200 @@
+# Architecture — clipforge v1
+
+## 1. Overview
+
+One Docker image, two long-running services on the operator's Intel MacBook:
+
+- `worker`: APScheduler process that runs the nightly pipeline, the evening slot dispatcher, URL polling, reports,
+  backups, and view snapshots.
+- `bot`: Telegram long-polling process for approvals, arming, submission marking and reconciliation.
+
+Both share `./data` (SQLite DB, media) and `./config` (YAML). They communicate only through the database (no IPC).
+
+```
+Sunday (operator)            Nightly 01:00 (worker)                      Evening 20:00–21:00
+-----------------            --------------------------------           ---------------------------------
+cf campaign add  --->  DB --> ingest -> transcribe -> rank -> render  --> bot: previews -> approve
+cf source add                    |          |          |        |         bot: Arm tonight
+                                 v          v          v        v         worker: slot dispatch -> Upload-Post
+                              sources   transcripts candidates clips      worker: poll URLs -> bot: Submit now
+                                                                         operator: submits on Content Rewards
+Saturday: /reconcile -> submissions/earnings -> weekly learning job -> few-shot examples -> rank prompt
+```
+
+## 2. Clip lifecycle (state machine, `schemas.ClipState`)
+
+```
+CANDIDATE -> RENDERED -> QA_FAILED (terminal)
+                      -> PENDING_REVIEW -> REJECTED (terminal)
+                                        -> APPROVED -> SCHEDULED -> PUBLISHED -> (per-post states)
+                                                    -> EXPIRED (campaign drained/ended before publish)
+```
+
+Per-platform `Post` states (`schemas.PostState`): `QUEUED -> PUBLISHING -> LIVE | FAILED`, then submission state
+(`schemas.SubmissionState`): `AWAITING -> SUBMITTED | MISSED`, then brand outcome
+(`schemas.BrandDecision`): `PENDING -> APPROVED | REJECTED`, and `paid_usd` accumulates.
+
+Allowed transitions live in `schemas.CLIP_TRANSITIONS`; `db` refuses any other transition and every transition writes
+an `events` row.
+
+## 3. Data model (SQLite)
+
+| Table | Key columns |
+| --- | --- |
+| `campaigns` | id, platform_marketplace (`content_rewards`/`vyro`), name, url, submission_url, cpm_usd, min_payout_usd, per_clip_cap_usd, budget_remaining_usd, allowed_platforms (json), required_tags (json), disclosure_text, rules_notes, is_political, approval_rate_pct, status, created_at |
+| `sources` | id, campaign_id, url, sha256, local_path, duration_s, status, downloaded_at, purged_at |
+| `transcripts` | id, source_id, provider, model, words_json_path, language, cost_usd |
+| `candidates` | id, source_id, start_s, end_s, score, standalone, brief_ok, reasons, hook, title, captions_json, prompt_version, state |
+| `clips` | id, candidate_id, account_set, style_preset, path, duration_s, sha256, qa_report_json, state |
+| `approvals` | id, clip_id, decision, reason, decided_at, telegram_message_id |
+| `evenings` | date, armed_at, skipped, slots_json |
+| `posts` | id, clip_id, platform, slot_at, request_id, upload_post_job, post_url, published_at, state, error |
+| `submissions` | id, post_id, campaign_id, deadline_at, state, submitted_at, brand_decision, decided_at, paid_usd |
+| `view_snapshots` | id, post_id, taken_at, views, source (`youtube_api`/`manual`) |
+| `fewshots` | id, kind (`positive`/`negative`), candidate_id, hook, transcript_excerpt, outcome_note, week |
+| `costs` | id, at, service, model, units, unit_kind, usd |
+| `events` | id, at, entity, entity_id, from_state, to_state, actor (`system`/`operator`), detail |
+
+## 4. Modules
+
+### 4.1 ingest
+- `registry.py`: add/list/update campaigns from `schemas.CampaignIn` JSON; `drain`/`end` commands.
+- `download.py`: only `sources` rows. Handlers by host: Google Drive (`gdown`), Dropbox (`?dl=1`), direct HTTP; Twitch VOD/clip
+  (`yt-dlp`) only when the source's campaign has `allow_stream_download=true`. Any other host, including YouTube and Kick, is
+  refused with an operator alert. Refuses any URL not registered (`compliance.assert_registered_source`). Stores SHA-256 and
+  duration (ffprobe).
+- `inbox.py`: watches `inbox/<campaign_slug>/` for files Carson drops in by hand (footage the campaign supplied as a download he
+  made himself); registers each as a source with `url = file://inbox/...` after confirming the campaign is active.
+- Twitch VODs expire (up to 60 days) and Twitch clips are ≤ 60 s: register the source early, download once, keep the hash.
+- Purge job deletes source media 7 days after all its candidates are terminal.
+
+### 4.2 transcribe
+- Extract audio: `ffmpeg -i in -vn -ac 1 -ar 16000 -b:a 32k out.mp3` (~14 MB per hour).
+- Chunk to < 24 MB (≈ 95 min) with 2 s overlap; merge words, de-duplicate overlap by timestamp.
+- Groq: `client.audio.transcriptions.create(model="whisper-large-v3-turbo", response_format="verbose_json",
+  timestamp_granularities=["word","segment"])`. Docs: https://console.groq.com/docs/speech-to-text
+  (the docs page has a conflicting code comment about `json` vs `verbose_json` — verify word timestamps in a test).
+- Fallback: `faster-whisper` `large-v3-turbo`, `device="cpu"`, `compute_type="int8"` — slow; only on two Groq failures.
+- Output: `schemas.Transcript` (words with start/end/prob, segments).
+
+### 4.3 rank
+- `windows.py` (pure): build windows 20–75 s aligned to segment boundaries, stride ~10 s; pre-score by speech density,
+  question→answer patterns, and audio energy peaks (ffmpeg `astats`/`ebur128` per second, computed in transcribe or
+  render utils). Keep top 60.
+- `score.py`: Haiku, batches of 10 windows, forced tool `score_windows` with JSON schema from
+  `schemas.WindowScore`. Prompt inputs: campaign brief summary + rules, few-shots (`fewshots` table), windows text.
+- `copy.py`: Sonnet for the top N (`rank.top_n_per_source`, default 8): `schemas.ClipCopy` = hook (≤ 8 words),
+  youtube_title (≤ 60 chars), captions per platform. `compliance.normalize_caption` then forces `#ad` first, appends
+  required campaign tags, strips URLs for X, enforces platform length limits.
+- Prompts live in `prompts/*.md` with a `version:` header; the version is stored on each candidate.
+- `evals/`: harness that runs scoring on fixture transcripts and checks schema validity, determinism at temperature 0,
+  and ranking agreement with Carson's labels (`evals/labels.csv`, filled over time).
+
+### 4.4 render
+- `shots.py`: PySceneDetect `ContentDetector` on the candidate range → shot list.
+- `reframe.py` (pure core): for each shot sample 5 fps, MediaPipe FaceDetector → face boxes; choose the largest face
+  (v1); crop x-center = median of its centers; crop width = src_h × 9/16. If no face, or the two largest faces' centers
+  are further apart than the crop width → `fit_blur` mode (scaled source over blurred, zoomed copy). Output
+  `schemas.CropPlan` (per shot: mode, x, w, h).
+- `captions.py` (pure): word chunks of 2–4 words, ≤ 18 chars per line; ASS file with per-word highlight (`\k` or
+  per-word events); safe zone: captions centered at 62–70% height (clear of platform UI at the bottom ~20%).
+- `overlays.py`: hook text (top third) 0–2.5 s; "Ad" label top-left 0–3 s; style preset (font, size, colors, outline)
+  from `config.styles[account_set]`. Fonts are OFL-licensed and bundled in `assets/fonts/`.
+- `encode.py`: one ffmpeg filtergraph per shot then concat, or a single graph with `trim`+`crop`+`concat`;
+  `-c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k`, `loudnorm=I=-14:TP=-1.5:LRA=11`.
+  Writes `schemas.RenderManifest` (includes `has_ad_label`, `ad_label_end_s`, `style_preset`).
+
+### 4.5 qa
+`checks.py`: ffprobe + manifest → `schemas.QAReport` (pass/fail per check). Checks listed in PRD F6 plus
+`compliance.assert_render_manifest`.
+
+### 4.6 review (Telegram bot)
+- `python-telegram-bot` v21 Application, long polling; every handler first checks `chat_id == TELEGRAM_OWNER_CHAT_ID`.
+- Preview: `send_video` (≤ 50 MB; else a 480p proxy rendered for preview) with caption: campaign, score, hook,
+  platforms, duration. Inline keyboard: Approve / Reject (reason menu: off-brief, boring, bad crop, bad captions,
+  other) / New hook / Shorter.
+- New hook → re-run `rank.copy` for that clip and re-render overlays only. Shorter → trim 20% from the weaker end
+  using word timestamps, re-render.
+- Evening: 20:00 Arm message (`evenings` row); Submit-now messages with Submitted/Missed; +20 min reminder.
+- `/reconcile`: iterate open submissions (oldest first), buttons Approved/Rejected/Pending/Paid, then
+  "reply with $ amount or 0".
+
+### 4.7 publish
+- `slots.py` (pure): from `config.slots` and today's date (America/New_York) → slot datetimes; assign approved clips
+  FIFO by campaign priority; one clip per slot; all enabled platforms of that clip's campaign at that slot.
+- `upload_post.py`: `httpx` client. **Verify every field name against** https://docs.upload-post.com/api/upload-video
+  and the OpenAPI spec before coding. Endpoint `POST /api/upload` (multipart). Fields we use:
+  - common: `user` (= Upload-Post profile for the account set), `platform[]`, `video`, `title`, `request_id`
+    (= our post id, for idempotency), `external_id` (= our post id), `async_upload=true`.
+  - TikTok: `privacy_level` (`PUBLIC_TO_EVERYONE` in live, `SELF_ONLY` in private), `brand_content_toggle=true`,
+    `brand_organic_toggle=false`, `is_aigc=false`, `post_mode=DIRECT_POST`, `disable_inbox_fallback=true`.
+  - YouTube: `privacyStatus` (`public`/`private`), `selfDeclaredMadeForKids=false`, `containsSyntheticMedia=false`,
+    `hasPaidProductPlacement=true`, `categoryId` from config.
+  - Instagram: `media_type=REELS`, `share_to_feed=true`, `is_ai_generated=false`. No `collaborators` (Content
+    Rewards bans collab posts unless the brief allows).
+  - X: `made_with_ai=false`; caption must contain no URLs (Upload-Post strips them anyway).
+  - Never send `first_comment`.
+  Auth header and status/URL endpoint: take from the docs (do not guess). TikTok post URLs can take ~3 min to appear.
+- `dispatcher.py`: every 30 s; for each slot within the next 60 s on an **armed** evening, publish its posts; then poll
+  status every 30 s for up to 10 min; on URL → `posts.state=LIVE`, create `submissions` row with
+  `deadline_at = published_at + 30 min` and notify the bot via DB flag. Unarmed at first slot → mark evening skipped,
+  return clips to the queue.
+- Modes per PRD F9; `dry_run` makes no HTTP calls and fabricates `https://example.invalid/<platform>/<post_id>`.
+
+### 4.8 track
+- `reconcile.py`: apply bot/CSV updates to submissions; CSV schema in `schemas.ReconcileRow`.
+- `youtube_views.py`: daily `videos.list?part=statistics&id=...` with `YOUTUBE_API_KEY` (1 quota unit per call,
+  batch up to 50 ids) → `view_snapshots`.
+- `learning.py` (weekly): label posts: positive if paid or ≥ campaign min-payout views within 7 days; negative if
+  rejected or < 500 views; write top/bottom 5 to `fewshots`.
+- `reports.py`: weekly digest and monthly report (kill/scale rule status) → bot message + `data/reports/*.md`.
+
+### 4.9 scheduler (worker)
+| Job | When (America/New_York) |
+| --- | --- |
+| nightly_pipeline | 01:00 daily |
+| purge_sources | 03:30 daily |
+| backup_db | 04:00 daily |
+| youtube_views | 12:00 daily |
+| arm_message | 20:00 Mon–Fri; weekend times from config |
+| slot_dispatcher | every 30 s |
+| url_poller | every 30 s |
+| submit_reminders | every 60 s |
+| weekly_report | Sat 08:00 |
+| weekly_learning | Sat 08:15 |
+| monthly_report | first Sun 08:00 |
+| heartbeat | every 60 s |
+
+### 4.10 costs
+`costs.record(service, model, units, unit_kind)` using prices in config; `costs.guard()` raises `SpendCapReached`
+when month-to-date ≥ `monthly_api_cap_usd`; pipeline catches it, pauses (`events` row + bot alert).
+
+## 5. Configuration
+
+- Secrets: environment (`.env`), loaded by `pydantic-settings` (`clipforge.config.Secrets`).
+- Behaviour: `config/clipforge.yaml` (copy of `clipforge.example.yaml`) → `clipforge.config.AppConfig`.
+
+## 6. External services (official docs to verify against)
+
+| Service | Use | Docs |
+| --- | --- | --- |
+| Anthropic API | Haiku 5.5 scoring, Sonnet 5.5 copy | https://platform.claude.com/docs/en/models/overview |
+| Groq | Whisper transcription | https://console.groq.com/docs/speech-to-text |
+| Upload-Post | Publishing | https://docs.upload-post.com/api/upload-video |
+| Telegram Bot API | Review UI | https://core.telegram.org/bots/api |
+| YouTube Data API v3 | View counts | https://developers.google.com/youtube/v3/docs/videos/list |
+| MediaPipe Face Detector | Reframing | https://ai.google.dev/edge/mediapipe/solutions/vision/face_detector/python |
+
+## 7. Deployment
+
+- `Dockerfile`: `python:3.12-slim-bookworm` (linux/amd64), apt `ffmpeg fonts-dejavu-core`, uv sync from lockfile,
+  non-root user, `HEALTHCHECK` on the heartbeat file age.
+- `docker-compose.yml`: services `worker` (`cf worker`) and `bot` (`cf bot`), same image, `env_file: .env`, volumes
+  `./data:/app/data`, `./config:/app/config:ro`, `restart: unless-stopped`, CPU limit 6.
+- CI: GitHub Actions on Ubuntu: `uv sync`, `ruff`, `pytest` (no secrets; all external calls mocked).
+
+## 8. Security
+
+- Bot ignores every chat except the owner's. No inbound ports (long polling only).
+- Redacting log filter for anything matching configured secret values.
+- `.env` git-ignored; Claude Code denied `Read(./.env*)` via `.claude/settings.json`.

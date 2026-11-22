@@ -1,0 +1,77 @@
+# Copy to config/clipforge.yaml. Behaviour only; secrets go in .env.
+timezone: America/New_York
+
+operator_window:            # Publishing is only allowed inside these windows (COMPLIANCE #11)
+  weekdays: { start: "20:00", end: "21:00" }    # Mon-Fri
+  saturday: { start: "20:00", end: "21:00" }    # change to your weekend hour
+  sunday:   { start: "20:00", end: "21:00" }
+
+slots:                      # Each slot publishes one clip to all its enabled platforms
+  weekdays: ["20:10", "20:25", "20:40"]
+  saturday: ["20:30", "20:45"]
+  sunday:   ["20:30", "20:45"]
+arm_message_minutes_before_first_slot: 10
+submission_window_minutes: 30
+submission_reminder_minutes: 20
+
+publish_mode: dry_run       # dry_run | private | live  (env PUBLISH_MODE overrides)
+
+account_sets:               # One Upload-Post profile per account set (one niche)
+  gaming-1:
+    upload_post_user: "gaming-1"
+    platforms: [tiktok, instagram]            # GTA 6 campaigns accept all four; start with these two, add youtube when you set it up, x in week 5
+    style_preset: bold-yellow
+
+styles:
+  bold-yellow:  { font: "Montserrat-ExtraBold", size: 78, primary: "#FFFFFF", highlight: "#FFD400", outline: 6, y_pct: 66 }
+  clean-white:  { font: "Inter-Bold",          size: 72, primary: "#FFFFFF", highlight: "#7CDBFF", outline: 5, y_pct: 64 }
+  boxed-black:  { font: "Inter-Black",         size: 70, primary: "#000000", highlight: "#000000", box: "#FFFFFF", y_pct: 64 }
+
+pipeline:
+  nightly_candidate_target: 8
+  max_sources_per_night: 2
+  window_min_s: 20
+  window_max_s: 75
+  windows_scored_per_source: 60
+  top_n_per_source: 8
+  max_clip_s: 90
+  min_clip_s: 10
+
+render:
+  width: 1080
+  height: 1920
+  fps: 30
+  preset: veryfast
+  crf: 21
+  loudnorm_i: -14
+  hook_seconds: 2.5
+  ad_label_seconds: 3.0
+  ad_label_text: "Ad"
+
+models:
+  rank: claude-haiku-5-5
+  copy: claude-sonnet-5-5
+  transcribe: whisper-large-v3-turbo
+
+prices:                      # USD; check current pricing pages monthly
+  claude-haiku-5-5:  { input_per_mtok: 0.10, output_per_mtok: 0.50 }
+  claude-sonnet-5-5: { input_per_mtok: 2.00, output_per_mtok: 10.00 }
+  whisper-large-v3-turbo: { per_audio_hour: 0.04 }
+
+monthly_api_cap_usd: 15
+
+campaign_filter:             # Used by `cf campaign check` and the Claude chat prompt
+  min_approval_rate_pct: 40          # only applied when the campaign shows one
+  min_budget_to_cap_ratio: 5
+  max_views_to_min_payout: 10000
+  min_budget_remaining_usd: 1000     # GTA 6 budgets are small and drain fast; recheck before joining
+  max_participants: 150
+  allowed_footage_modes: [supplied, streamer_stream]   # never own_gameplay
+
+youtube:
+  category_id: "22"
+
+retention:
+  source_days_after_terminal: 7
+  clip_days: 30
+  backups_keep: 14
