@@ -6,6 +6,8 @@ import os
 import time
 from pathlib import Path
 
+import pytest
+
 from clipforge import heartbeat
 
 
@@ -28,3 +30,10 @@ def test_stale(tmp_path: Path) -> None:
     age = heartbeat.age_s(tmp_path, "bot")
     assert age is not None
     assert age > heartbeat.ALERT_AFTER_S
+
+
+def test_main_exit_codes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLIPFORGE_DATA_DIR", str(tmp_path))
+    assert heartbeat.main(["worker"]) == 1
+    heartbeat.beat(tmp_path / "heartbeat", "worker")
+    assert heartbeat.main(["worker"]) == 0

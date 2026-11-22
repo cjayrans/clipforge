@@ -32,3 +32,18 @@ def age_s(heartbeat_dir: Path, name: str, *, now: float | None = None) -> float 
 def is_healthy(heartbeat_dir: Path, name: str, *, max_age_s: float = STALE_AFTER_S) -> bool:
     age = age_s(heartbeat_dir, name)
     return age is not None and age <= max_age_s
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`python -m clipforge.heartbeat <name>`: exit 0 if healthy (Docker HEALTHCHECK)."""
+    import os
+    import sys
+
+    args = sys.argv[1:] if argv is None else argv
+    name = args[0] if args else os.environ.get("CLIPFORGE_SERVICE", "worker")
+    data_dir = Path(os.environ.get("CLIPFORGE_DATA_DIR", "data"))
+    return 0 if is_healthy(data_dir / "heartbeat", name) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

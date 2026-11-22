@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 data/
+inbox/
 config/clipforge.yaml
 tests/fixtures/local/
 .venv/

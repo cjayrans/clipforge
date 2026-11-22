@@ -1,0 +1,30 @@
+# Two long-running services from one image (docs/ARCHITECTURE.md §7). They share ./data (SQLite + media) and
+# talk only through the database. Never run `docker compose config`: it prints values loaded from .env.
+x-app: &app
+  build:
+    context: .
+    platforms: [linux/amd64]
+  image: clipforge:latest
+  platform: linux/amd64
+  env_file:
+    - path: .env
+      required: false
+  volumes:
+    - ./data:/app/data
+    - ./config:/app/config:ro
+    - ./inbox:/app/inbox
+  restart: unless-stopped
+  cpus: 6
+
+services:
+  worker:
+    <<: *app
+    command: ["cf", "worker"]
+    environment:
+      CLIPFORGE_SERVICE: worker
+
+  bot:
+    <<: *app
+    command: ["cf", "bot"]
+    environment:
+      CLIPFORGE_SERVICE: bot
