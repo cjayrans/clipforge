@@ -74,6 +74,8 @@ override-dependencies = [
 line-length = 120
 target-version = "py312"
 src = ["src", "tests"]
+# .claude/ holds the operator's Claude Code guard hook; leave it exactly as provided.
+extend-exclude = [".claude"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "UP", "B", "SIM", "PT", "C4"]
