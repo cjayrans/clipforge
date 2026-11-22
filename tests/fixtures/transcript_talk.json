@@ -1,0 +1,1347 @@
+{
+ "source_id": 1,
+ "provider": "groq",
+ "model": "whisper-large-v3-turbo",
+ "language": "en",
+ "words": [
+  {
+   "text": "Okay",
+   "start_s": 0.0,
+   "end_s": 0.37,
+   "prob": 0.8
+  },
+  {
+   "text": "chat,",
+   "start_s": 0.41,
+   "end_s": 0.79,
+   "prob": 0.83
+  },
+  {
+   "text": "we",
+   "start_s": 0.83,
+   "end_s": 1.2,
+   "prob": 0.86
+  },
+  {
+   "text": "are",
+   "start_s": 1.24,
+   "end_s": 1.62,
+   "prob": 0.89
+  },
+  {
+   "text": "finally",
+   "start_s": 1.66,
+   "end_s": 2.03,
+   "prob": 0.92
+  },
+  {
+   "text": "inside",
+   "start_s": 2.07,
+   "end_s": 2.45,
+   "prob": 0.95
+  },
+  {
+   "text": "the",
+   "start_s": 2.49,
+   "end_s": 2.86,
+   "prob": 0.98
+  },
+  {
+   "text": "bank",
+   "start_s": 2.9,
+   "end_s": 3.27,
+   "prob": 0.81
+  },
+  {
+   "text": "and",
+   "start_s": 3.31,
+   "end_s": 3.69,
+   "prob": 0.84
+  },
+  {
+   "text": "nobody",
+   "start_s": 3.73,
+   "end_s": 4.1,
+   "prob": 0.87
+  },
+  {
+   "text": "has",
+   "start_s": 4.14,
+   "end_s": 4.52,
+   "prob": 0.9
+  },
+  {
+   "text": "noticed",
+   "start_s": 4.56,
+   "end_s": 4.93,
+   "prob": 0.93
+  },
+  {
+   "text": "us",
+   "start_s": 4.97,
+   "end_s": 5.35,
+   "prob": 0.96
+  },
+  {
+   "text": "yet.",
+   "start_s": 5.39,
+   "end_s": 5.76,
+   "prob": 0.99
+  },
+  {
+   "text": "Wait,",
+   "start_s": 6.2,
+   "end_s": 6.57,
+   "prob": 0.87
+  },
+  {
+   "text": "wait,",
+   "start_s": 6.61,
+   "end_s": 6.99,
+   "prob": 0.9
+  },
+  {
+   "text": "why",
+   "start_s": 7.03,
+   "end_s": 7.4,
+   "prob": 0.93
+  },
+  {
+   "text": "is",
+   "start_s": 7.44,
+   "end_s": 7.82,
+   "prob": 0.96
+  },
+  {
+   "text": "the",
+   "start_s": 7.86,
+   "end_s": 8.23,
+   "prob": 0.99
+  },
+  {
+   "text": "alarm",
+   "start_s": 8.27,
+   "end_s": 8.65,
+   "prob": 0.82
+  },
+  {
+   "text": "already",
+   "start_s": 8.69,
+   "end_s": 9.06,
+   "prob": 0.85
+  },
+  {
+   "text": "going",
+   "start_s": 9.1,
+   "end_s": 9.47,
+   "prob": 0.88
+  },
+  {
+   "text": "off?",
+   "start_s": 9.51,
+   "end_s": 9.89,
+   "prob": 0.91
+  },
+  {
+   "text": "I",
+   "start_s": 9.93,
+   "end_s": 10.3,
+   "prob": 0.94
+  },
+  {
+   "text": "did",
+   "start_s": 10.34,
+   "end_s": 10.72,
+   "prob": 0.97
+  },
+  {
+   "text": "not",
+   "start_s": 10.76,
+   "end_s": 11.13,
+   "prob": 0.8
+  },
+  {
+   "text": "touch",
+   "start_s": 11.17,
+   "end_s": 11.55,
+   "prob": 0.83
+  },
+  {
+   "text": "anything.",
+   "start_s": 11.59,
+   "end_s": 11.96,
+   "prob": 0.86
+  },
+  {
+   "text": "Do",
+   "start_s": 12.4,
+   "end_s": 12.7,
+   "prob": 0.94
+  },
+  {
+   "text": "you",
+   "start_s": 12.74,
+   "end_s": 13.05,
+   "prob": 0.97
+  },
+  {
+   "text": "think",
+   "start_s": 13.09,
+   "end_s": 13.39,
+   "prob": 0.8
+  },
+  {
+   "text": "the",
+   "start_s": 13.43,
+   "end_s": 13.74,
+   "prob": 0.83
+  },
+  {
+   "text": "guard",
+   "start_s": 13.78,
+   "end_s": 14.08,
+   "prob": 0.86
+  },
+  {
+   "text": "saw",
+   "start_s": 14.12,
+   "end_s": 14.43,
+   "prob": 0.89
+  },
+  {
+   "text": "the",
+   "start_s": 14.47,
+   "end_s": 14.77,
+   "prob": 0.92
+  },
+  {
+   "text": "car?",
+   "start_s": 14.81,
+   "end_s": 15.12,
+   "prob": 0.95
+  },
+  {
+   "text": "Because",
+   "start_s": 15.16,
+   "end_s": 15.46,
+   "prob": 0.98
+  },
+  {
+   "text": "I",
+   "start_s": 15.5,
+   "end_s": 15.8,
+   "prob": 0.81
+  },
+  {
+   "text": "parked",
+   "start_s": 15.84,
+   "end_s": 16.15,
+   "prob": 0.84
+  },
+  {
+   "text": "it",
+   "start_s": 16.19,
+   "end_s": 16.49,
+   "prob": 0.87
+  },
+  {
+   "text": "on",
+   "start_s": 16.53,
+   "end_s": 16.84,
+   "prob": 0.9
+  },
+  {
+   "text": "the",
+   "start_s": 16.88,
+   "end_s": 17.18,
+   "prob": 0.93
+  },
+  {
+   "text": "sidewalk",
+   "start_s": 17.22,
+   "end_s": 17.53,
+   "prob": 0.96
+  },
+  {
+   "text": "like",
+   "start_s": 17.57,
+   "end_s": 17.87,
+   "prob": 0.99
+  },
+  {
+   "text": "an",
+   "start_s": 17.91,
+   "end_s": 18.22,
+   "prob": 0.82
+  },
+  {
+   "text": "idiot.",
+   "start_s": 18.26,
+   "end_s": 18.56,
+   "prob": 0.85
+  },
+  {
+   "text": "Yeah,",
+   "start_s": 19.0,
+   "end_s": 19.35,
+   "prob": 0.81
+  },
+  {
+   "text": "he",
+   "start_s": 19.39,
+   "end_s": 19.73,
+   "prob": 0.84
+  },
+  {
+   "text": "definitely",
+   "start_s": 19.77,
+   "end_s": 20.12,
+   "prob": 0.87
+  },
+  {
+   "text": "saw",
+   "start_s": 20.16,
+   "end_s": 20.51,
+   "prob": 0.9
+  },
+  {
+   "text": "the",
+   "start_s": 20.55,
+   "end_s": 20.89,
+   "prob": 0.93
+  },
+  {
+   "text": "car.",
+   "start_s": 20.93,
+   "end_s": 21.28,
+   "prob": 0.96
+  },
+  {
+   "text": "Okay,",
+   "start_s": 21.32,
+   "end_s": 21.67,
+   "prob": 0.99
+  },
+  {
+   "text": "new",
+   "start_s": 21.71,
+   "end_s": 22.05,
+   "prob": 0.82
+  },
+  {
+   "text": "plan,",
+   "start_s": 22.09,
+   "end_s": 22.44,
+   "prob": 0.85
+  },
+  {
+   "text": "we",
+   "start_s": 22.48,
+   "end_s": 22.83,
+   "prob": 0.88
+  },
+  {
+   "text": "go",
+   "start_s": 22.87,
+   "end_s": 23.21,
+   "prob": 0.91
+  },
+  {
+   "text": "out",
+   "start_s": 23.25,
+   "end_s": 23.6,
+   "prob": 0.94
+  },
+  {
+   "text": "through",
+   "start_s": 23.64,
+   "end_s": 23.99,
+   "prob": 0.97
+  },
+  {
+   "text": "the",
+   "start_s": 24.03,
+   "end_s": 24.37,
+   "prob": 0.8
+  },
+  {
+   "text": "roof.",
+   "start_s": 24.41,
+   "end_s": 24.76,
+   "prob": 0.83
+  },
+  {
+   "text": "Is",
+   "start_s": 25.2,
+   "end_s": 25.6,
+   "prob": 0.88
+  },
+  {
+   "text": "there",
+   "start_s": 25.64,
+   "end_s": 26.05,
+   "prob": 0.91
+  },
+  {
+   "text": "even",
+   "start_s": 26.09,
+   "end_s": 26.49,
+   "prob": 0.94
+  },
+  {
+   "text": "a",
+   "start_s": 26.53,
+   "end_s": 26.93,
+   "prob": 0.97
+  },
+  {
+   "text": "ladder",
+   "start_s": 26.97,
+   "end_s": 27.37,
+   "prob": 0.8
+  },
+  {
+   "text": "up",
+   "start_s": 27.41,
+   "end_s": 27.82,
+   "prob": 0.83
+  },
+  {
+   "text": "here?",
+   "start_s": 27.86,
+   "end_s": 28.26,
+   "prob": 0.86
+  },
+  {
+   "text": "No?",
+   "start_s": 28.3,
+   "end_s": 28.7,
+   "prob": 0.89
+  },
+  {
+   "text": "Great.",
+   "start_s": 28.74,
+   "end_s": 29.15,
+   "prob": 0.92
+  },
+  {
+   "text": "Amazing.",
+   "start_s": 29.19,
+   "end_s": 29.59,
+   "prob": 0.95
+  },
+  {
+   "text": "Love",
+   "start_s": 29.63,
+   "end_s": 30.03,
+   "prob": 0.98
+  },
+  {
+   "text": "this",
+   "start_s": 30.07,
+   "end_s": 30.47,
+   "prob": 0.81
+  },
+  {
+   "text": "for",
+   "start_s": 30.51,
+   "end_s": 30.92,
+   "prob": 0.84
+  },
+  {
+   "text": "us.",
+   "start_s": 30.96,
+   "end_s": 31.36,
+   "prob": 0.87
+  },
+  {
+   "text": "Hold",
+   "start_s": 31.8,
+   "end_s": 32.12,
+   "prob": 0.95
+  },
+  {
+   "text": "on,",
+   "start_s": 32.16,
+   "end_s": 32.49,
+   "prob": 0.98
+  },
+  {
+   "text": "there",
+   "start_s": 32.53,
+   "end_s": 32.85,
+   "prob": 0.81
+  },
+  {
+   "text": "is",
+   "start_s": 32.89,
+   "end_s": 33.22,
+   "prob": 0.84
+  },
+  {
+   "text": "a",
+   "start_s": 33.26,
+   "end_s": 33.58,
+   "prob": 0.87
+  },
+  {
+   "text": "helicopter",
+   "start_s": 33.62,
+   "end_s": 33.95,
+   "prob": 0.9
+  },
+  {
+   "text": "on",
+   "start_s": 33.99,
+   "end_s": 34.31,
+   "prob": 0.93
+  },
+  {
+   "text": "the",
+   "start_s": 34.35,
+   "end_s": 34.68,
+   "prob": 0.96
+  },
+  {
+   "text": "next",
+   "start_s": 34.72,
+   "end_s": 35.04,
+   "prob": 0.99
+  },
+  {
+   "text": "building",
+   "start_s": 35.08,
+   "end_s": 35.41,
+   "prob": 0.82
+  },
+  {
+   "text": "and",
+   "start_s": 35.45,
+   "end_s": 35.77,
+   "prob": 0.85
+  },
+  {
+   "text": "I",
+   "start_s": 35.81,
+   "end_s": 36.14,
+   "prob": 0.88
+  },
+  {
+   "text": "think",
+   "start_s": 36.18,
+   "end_s": 36.5,
+   "prob": 0.91
+  },
+  {
+   "text": "the",
+   "start_s": 36.54,
+   "end_s": 36.87,
+   "prob": 0.94
+  },
+  {
+   "text": "door",
+   "start_s": 36.91,
+   "end_s": 37.23,
+   "prob": 0.97
+  },
+  {
+   "text": "is",
+   "start_s": 37.27,
+   "end_s": 37.6,
+   "prob": 0.8
+  },
+  {
+   "text": "open.",
+   "start_s": 37.64,
+   "end_s": 37.96,
+   "prob": 0.83
+  },
+  {
+   "text": "How",
+   "start_s": 38.4,
+   "end_s": 38.77,
+   "prob": 0.82
+  },
+  {
+   "text": "far",
+   "start_s": 38.81,
+   "end_s": 39.19,
+   "prob": 0.85
+  },
+  {
+   "text": "can",
+   "start_s": 39.23,
+   "end_s": 39.6,
+   "prob": 0.88
+  },
+  {
+   "text": "you",
+   "start_s": 39.64,
+   "end_s": 40.01,
+   "prob": 0.91
+  },
+  {
+   "text": "jump",
+   "start_s": 40.05,
+   "end_s": 40.43,
+   "prob": 0.94
+  },
+  {
+   "text": "in",
+   "start_s": 40.47,
+   "end_s": 40.84,
+   "prob": 0.97
+  },
+  {
+   "text": "this",
+   "start_s": 40.88,
+   "end_s": 41.25,
+   "prob": 0.8
+  },
+  {
+   "text": "game?",
+   "start_s": 41.29,
+   "end_s": 41.67,
+   "prob": 0.83
+  },
+  {
+   "text": "Let's",
+   "start_s": 41.71,
+   "end_s": 42.08,
+   "prob": 0.86
+  },
+  {
+   "text": "find",
+   "start_s": 42.12,
+   "end_s": 42.49,
+   "prob": 0.89
+  },
+  {
+   "text": "out,",
+   "start_s": 42.53,
+   "end_s": 42.91,
+   "prob": 0.92
+  },
+  {
+   "text": "live,",
+   "start_s": 42.95,
+   "end_s": 43.32,
+   "prob": 0.95
+  },
+  {
+   "text": "with",
+   "start_s": 43.36,
+   "end_s": 43.73,
+   "prob": 0.98
+  },
+  {
+   "text": "everybody",
+   "start_s": 43.77,
+   "end_s": 44.15,
+   "prob": 0.81
+  },
+  {
+   "text": "watching.",
+   "start_s": 44.19,
+   "end_s": 44.56,
+   "prob": 0.84
+  },
+  {
+   "text": "I",
+   "start_s": 45.0,
+   "end_s": 45.37,
+   "prob": 0.89
+  },
+  {
+   "text": "made",
+   "start_s": 45.41,
+   "end_s": 45.79,
+   "prob": 0.92
+  },
+  {
+   "text": "it!",
+   "start_s": 45.83,
+   "end_s": 46.2,
+   "prob": 0.95
+  },
+  {
+   "text": "I",
+   "start_s": 46.24,
+   "end_s": 46.62,
+   "prob": 0.98
+  },
+  {
+   "text": "actually",
+   "start_s": 46.66,
+   "end_s": 47.03,
+   "prob": 0.81
+  },
+  {
+   "text": "made",
+   "start_s": 47.07,
+   "end_s": 47.45,
+   "prob": 0.84
+  },
+  {
+   "text": "it!",
+   "start_s": 47.49,
+   "end_s": 47.86,
+   "prob": 0.87
+  },
+  {
+   "text": "Clip",
+   "start_s": 47.9,
+   "end_s": 48.27,
+   "prob": 0.9
+  },
+  {
+   "text": "that,",
+   "start_s": 48.31,
+   "end_s": 48.69,
+   "prob": 0.93
+  },
+  {
+   "text": "somebody",
+   "start_s": 48.73,
+   "end_s": 49.1,
+   "prob": 0.96
+  },
+  {
+   "text": "clip",
+   "start_s": 49.14,
+   "end_s": 49.52,
+   "prob": 0.99
+  },
+  {
+   "text": "that",
+   "start_s": 49.56,
+   "end_s": 49.93,
+   "prob": 0.82
+  },
+  {
+   "text": "right",
+   "start_s": 49.97,
+   "end_s": 50.35,
+   "prob": 0.85
+  },
+  {
+   "text": "now.",
+   "start_s": 50.39,
+   "end_s": 50.76,
+   "prob": 0.88
+  },
+  {
+   "text": "Okay,",
+   "start_s": 51.2,
+   "end_s": 51.52,
+   "prob": 0.96
+  },
+  {
+   "text": "I",
+   "start_s": 51.56,
+   "end_s": 51.89,
+   "prob": 0.99
+  },
+  {
+   "text": "have",
+   "start_s": 51.93,
+   "end_s": 52.25,
+   "prob": 0.82
+  },
+  {
+   "text": "never",
+   "start_s": 52.29,
+   "end_s": 52.62,
+   "prob": 0.85
+  },
+  {
+   "text": "flown",
+   "start_s": 52.66,
+   "end_s": 52.98,
+   "prob": 0.88
+  },
+  {
+   "text": "one",
+   "start_s": 53.02,
+   "end_s": 53.35,
+   "prob": 0.91
+  },
+  {
+   "text": "of",
+   "start_s": 53.39,
+   "end_s": 53.71,
+   "prob": 0.94
+  },
+  {
+   "text": "these",
+   "start_s": 53.75,
+   "end_s": 54.08,
+   "prob": 0.97
+  },
+  {
+   "text": "before,",
+   "start_s": 54.12,
+   "end_s": 54.44,
+   "prob": 0.8
+  },
+  {
+   "text": "so",
+   "start_s": 54.48,
+   "end_s": 54.81,
+   "prob": 0.83
+  },
+  {
+   "text": "what",
+   "start_s": 54.85,
+   "end_s": 55.17,
+   "prob": 0.86
+  },
+  {
+   "text": "is",
+   "start_s": 55.21,
+   "end_s": 55.54,
+   "prob": 0.89
+  },
+  {
+   "text": "the",
+   "start_s": 55.58,
+   "end_s": 55.9,
+   "prob": 0.92
+  },
+  {
+   "text": "worst",
+   "start_s": 55.94,
+   "end_s": 56.27,
+   "prob": 0.95
+  },
+  {
+   "text": "that",
+   "start_s": 56.31,
+   "end_s": 56.63,
+   "prob": 0.98
+  },
+  {
+   "text": "could",
+   "start_s": 56.67,
+   "end_s": 57.0,
+   "prob": 0.81
+  },
+  {
+   "text": "happen?",
+   "start_s": 57.04,
+   "end_s": 57.36,
+   "prob": 0.84
+  },
+  {
+   "text": "The",
+   "start_s": 57.8,
+   "end_s": 58.24,
+   "prob": 0.83
+  },
+  {
+   "text": "worst",
+   "start_s": 58.28,
+   "end_s": 58.73,
+   "prob": 0.86
+  },
+  {
+   "text": "that",
+   "start_s": 58.77,
+   "end_s": 59.21,
+   "prob": 0.89
+  },
+  {
+   "text": "could",
+   "start_s": 59.25,
+   "end_s": 59.69,
+   "prob": 0.92
+  },
+  {
+   "text": "happen",
+   "start_s": 59.73,
+   "end_s": 60.18,
+   "prob": 0.95
+  },
+  {
+   "text": "is",
+   "start_s": 60.22,
+   "end_s": 60.66,
+   "prob": 0.98
+  },
+  {
+   "text": "apparently",
+   "start_s": 60.7,
+   "end_s": 61.14,
+   "prob": 0.81
+  },
+  {
+   "text": "flying",
+   "start_s": 61.18,
+   "end_s": 61.63,
+   "prob": 0.84
+  },
+  {
+   "text": "straight",
+   "start_s": 61.67,
+   "end_s": 62.11,
+   "prob": 0.87
+  },
+  {
+   "text": "into",
+   "start_s": 62.15,
+   "end_s": 62.59,
+   "prob": 0.9
+  },
+  {
+   "text": "a",
+   "start_s": 62.63,
+   "end_s": 63.08,
+   "prob": 0.93
+  },
+  {
+   "text": "billboard.",
+   "start_s": 63.12,
+   "end_s": 63.56,
+   "prob": 0.96
+  },
+  {
+   "text": "Why",
+   "start_s": 64.0,
+   "end_s": 64.35,
+   "prob": 0.9
+  },
+  {
+   "text": "does",
+   "start_s": 64.39,
+   "end_s": 64.73,
+   "prob": 0.93
+  },
+  {
+   "text": "the",
+   "start_s": 64.78,
+   "end_s": 65.12,
+   "prob": 0.96
+  },
+  {
+   "text": "billboard",
+   "start_s": 65.16,
+   "end_s": 65.51,
+   "prob": 0.99
+  },
+  {
+   "text": "have",
+   "start_s": 65.55,
+   "end_s": 65.9,
+   "prob": 0.82
+  },
+  {
+   "text": "my",
+   "start_s": 65.94,
+   "end_s": 66.28,
+   "prob": 0.85
+  },
+  {
+   "text": "face",
+   "start_s": 66.33,
+   "end_s": 66.67,
+   "prob": 0.88
+  },
+  {
+   "text": "on",
+   "start_s": 66.71,
+   "end_s": 67.06,
+   "prob": 0.91
+  },
+  {
+   "text": "it?",
+   "start_s": 67.1,
+   "end_s": 67.45,
+   "prob": 0.94
+  },
+  {
+   "text": "Who",
+   "start_s": 67.49,
+   "end_s": 67.83,
+   "prob": 0.97
+  },
+  {
+   "text": "made",
+   "start_s": 67.88,
+   "end_s": 68.22,
+   "prob": 0.8
+  },
+  {
+   "text": "this?",
+   "start_s": 68.26,
+   "end_s": 68.61,
+   "prob": 0.83
+  },
+  {
+   "text": "Was",
+   "start_s": 68.65,
+   "end_s": 69.0,
+   "prob": 0.86
+  },
+  {
+   "text": "it",
+   "start_s": 69.04,
+   "end_s": 69.38,
+   "prob": 0.89
+  },
+  {
+   "text": "you",
+   "start_s": 69.42,
+   "end_s": 69.77,
+   "prob": 0.92
+  },
+  {
+   "text": "guys?",
+   "start_s": 69.81,
+   "end_s": 70.16,
+   "prob": 0.95
+  },
+  {
+   "text": "Somebody",
+   "start_s": 70.6,
+   "end_s": 70.9,
+   "prob": 0.97
+  },
+  {
+   "text": "in",
+   "start_s": 70.94,
+   "end_s": 71.24,
+   "prob": 0.8
+  },
+  {
+   "text": "chat",
+   "start_s": 71.28,
+   "end_s": 71.58,
+   "prob": 0.83
+  },
+  {
+   "text": "paid",
+   "start_s": 71.62,
+   "end_s": 71.92,
+   "prob": 0.86
+  },
+  {
+   "text": "for",
+   "start_s": 71.96,
+   "end_s": 72.27,
+   "prob": 0.89
+  },
+  {
+   "text": "a",
+   "start_s": 72.31,
+   "end_s": 72.61,
+   "prob": 0.92
+  },
+  {
+   "text": "billboard",
+   "start_s": 72.65,
+   "end_s": 72.95,
+   "prob": 0.95
+  },
+  {
+   "text": "of",
+   "start_s": 72.99,
+   "end_s": 73.29,
+   "prob": 0.98
+  },
+  {
+   "text": "me",
+   "start_s": 73.33,
+   "end_s": 73.63,
+   "prob": 0.81
+  },
+  {
+   "text": "just",
+   "start_s": 73.67,
+   "end_s": 73.97,
+   "prob": 0.84
+  },
+  {
+   "text": "to",
+   "start_s": 74.01,
+   "end_s": 74.31,
+   "prob": 0.87
+  },
+  {
+   "text": "make",
+   "start_s": 74.35,
+   "end_s": 74.65,
+   "prob": 0.9
+  },
+  {
+   "text": "me",
+   "start_s": 74.69,
+   "end_s": 75.0,
+   "prob": 0.93
+  },
+  {
+   "text": "crash.",
+   "start_s": 75.04,
+   "end_s": 75.34,
+   "prob": 0.96
+  },
+  {
+   "text": "That",
+   "start_s": 75.38,
+   "end_s": 75.68,
+   "prob": 0.99
+  },
+  {
+   "text": "is",
+   "start_s": 75.72,
+   "end_s": 76.02,
+   "prob": 0.82
+  },
+  {
+   "text": "commitment.",
+   "start_s": 76.06,
+   "end_s": 76.36,
+   "prob": 0.85
+  },
+  {
+   "text": "Alright,",
+   "start_s": 76.8,
+   "end_s": 77.15,
+   "prob": 0.84
+  },
+  {
+   "text": "we",
+   "start_s": 77.19,
+   "end_s": 77.53,
+   "prob": 0.87
+  },
+  {
+   "text": "are",
+   "start_s": 77.57,
+   "end_s": 77.92,
+   "prob": 0.9
+  },
+  {
+   "text": "alive,",
+   "start_s": 77.96,
+   "end_s": 78.31,
+   "prob": 0.93
+  },
+  {
+   "text": "the",
+   "start_s": 78.35,
+   "end_s": 78.69,
+   "prob": 0.96
+  },
+  {
+   "text": "money",
+   "start_s": 78.73,
+   "end_s": 79.08,
+   "prob": 0.99
+  },
+  {
+   "text": "is",
+   "start_s": 79.12,
+   "end_s": 79.47,
+   "prob": 0.82
+  },
+  {
+   "text": "gone,",
+   "start_s": 79.51,
+   "end_s": 79.85,
+   "prob": 0.85
+  },
+  {
+   "text": "and",
+   "start_s": 79.89,
+   "end_s": 80.24,
+   "prob": 0.88
+  },
+  {
+   "text": "the",
+   "start_s": 80.28,
+   "end_s": 80.63,
+   "prob": 0.91
+  },
+  {
+   "text": "police",
+   "start_s": 80.67,
+   "end_s": 81.01,
+   "prob": 0.94
+  },
+  {
+   "text": "are",
+   "start_s": 81.05,
+   "end_s": 81.4,
+   "prob": 0.97
+  },
+  {
+   "text": "very,",
+   "start_s": 81.44,
+   "end_s": 81.79,
+   "prob": 0.8
+  },
+  {
+   "text": "very",
+   "start_s": 81.83,
+   "end_s": 82.17,
+   "prob": 0.83
+  },
+  {
+   "text": "close.",
+   "start_s": 82.21,
+   "end_s": 82.56,
+   "prob": 0.86
+  },
+  {
+   "text": "Honestly,",
+   "start_s": 83.0,
+   "end_s": 83.47,
+   "prob": 0.91
+  },
+  {
+   "text": "best",
+   "start_s": 83.51,
+   "end_s": 83.98,
+   "prob": 0.94
+  },
+  {
+   "text": "heist",
+   "start_s": 84.02,
+   "end_s": 84.48,
+   "prob": 0.97
+  },
+  {
+   "text": "we",
+   "start_s": 84.52,
+   "end_s": 84.99,
+   "prob": 0.8
+  },
+  {
+   "text": "have",
+   "start_s": 85.03,
+   "end_s": 85.5,
+   "prob": 0.83
+  },
+  {
+   "text": "ever",
+   "start_s": 85.54,
+   "end_s": 86.01,
+   "prob": 0.86
+  },
+  {
+   "text": "done.",
+   "start_s": 86.05,
+   "end_s": 86.51,
+   "prob": 0.89
+  },
+  {
+   "text": "Same",
+   "start_s": 86.55,
+   "end_s": 87.02,
+   "prob": 0.92
+  },
+  {
+   "text": "time",
+   "start_s": 87.06,
+   "end_s": 87.53,
+   "prob": 0.95
+  },
+  {
+   "text": "tomorrow?",
+   "start_s": 87.57,
+   "end_s": 88.04,
+   "prob": 0.98
+  },
+  {
+   "text": "Same",
+   "start_s": 88.08,
+   "end_s": 88.54,
+   "prob": 0.81
+  },
+  {
+   "text": "time",
+   "start_s": 88.58,
+   "end_s": 89.05,
+   "prob": 0.84
+  },
+  {
+   "text": "tomorrow.",
+   "start_s": 89.09,
+   "end_s": 89.56,
+   "prob": 0.87
+  }
+ ],
+ "segments": [
+  {
+   "text": "Okay chat, we are finally inside the bank and nobody has noticed us yet.",
+   "start_s": 0.0,
+   "end_s": 5.8
+  },
+  {
+   "text": "Wait, wait, why is the alarm already going off? I did not touch anything.",
+   "start_s": 6.2,
+   "end_s": 12.0
+  },
+  {
+   "text": "Do you think the guard saw the car? Because I parked it on the sidewalk like an idiot.",
+   "start_s": 12.4,
+   "end_s": 18.6
+  },
+  {
+   "text": "Yeah, he definitely saw the car. Okay, new plan, we go out through the roof.",
+   "start_s": 19.0,
+   "end_s": 24.8
+  },
+  {
+   "text": "Is there even a ladder up here? No? Great. Amazing. Love this for us.",
+   "start_s": 25.2,
+   "end_s": 31.4
+  },
+  {
+   "text": "Hold on, there is a helicopter on the next building and I think the door is open.",
+   "start_s": 31.8,
+   "end_s": 38.0
+  },
+  {
+   "text": "How far can you jump in this game? Let's find out, live, with everybody watching.",
+   "start_s": 38.4,
+   "end_s": 44.6
+  },
+  {
+   "text": "I made it! I actually made it! Clip that, somebody clip that right now.",
+   "start_s": 45.0,
+   "end_s": 50.8
+  },
+  {
+   "text": "Okay, I have never flown one of these before, so what is the worst that could happen?",
+   "start_s": 51.2,
+   "end_s": 57.4
+  },
+  {
+   "text": "The worst that could happen is apparently flying straight into a billboard.",
+   "start_s": 57.8,
+   "end_s": 63.6
+  },
+  {
+   "text": "Why does the billboard have my face on it? Who made this? Was it you guys?",
+   "start_s": 64.0,
+   "end_s": 70.2
+  },
+  {
+   "text": "Somebody in chat paid for a billboard of me just to make me crash. That is commitment.",
+   "start_s": 70.6,
+   "end_s": 76.4
+  },
+  {
+   "text": "Alright, we are alive, the money is gone, and the police are very, very close.",
+   "start_s": 76.8,
+   "end_s": 82.6
+  },
+  {
+   "text": "Honestly, best heist we have ever done. Same time tomorrow? Same time tomorrow.",
+   "start_s": 83.0,
+   "end_s": 89.6
+  }
+ ],
+ "duration_s": 90.0
+}
