@@ -19,7 +19,7 @@ from typing import Literal, Self
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from clipforge import compliance
@@ -43,7 +43,8 @@ class ConfigError(ValueError):
 class Secrets(BaseSettings):
     """Secrets from environment variables. All optional so tests and CI run without any; clients check at use."""
 
-    model_config = SettingsConfigDict(env_file=None, extra="ignore", case_sensitive=False)
+    # Empty values (KEY= in .env) count as unset.
+    model_config = SettingsConfigDict(env_file=None, extra="ignore", case_sensitive=False, env_ignore_empty=True)
 
     anthropic_api_key: SecretStr | None = None
     groq_api_key: SecretStr | None = None
@@ -68,7 +69,7 @@ SECRET_ENV_VARS: tuple[str, ...] = tuple(name.upper() for name in Secrets.model_
 class RuntimeEnv(BaseSettings):
     """Non-secret environment switches."""
 
-    model_config = SettingsConfigDict(env_file=None, extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(env_file=None, extra="ignore", case_sensitive=False, env_ignore_empty=True)
 
     publish_mode: PublishMode | None = None
     clipforge_config: Path = DEFAULT_CONFIG_PATH
@@ -327,7 +328,19 @@ class Settings:
         return self.data_dir / "reports"
 
 
+def load_secrets() -> Secrets:
+    """Load secrets; on error report only the variable names and error kinds, never the values."""
+    try:
+        return Secrets()
+    except ValidationError as exc:
+        problems = ", ".join(f"{'.'.join(str(p) for p in e['loc']).upper()} ({e['type']})" for e in exc.errors())
+        raise ConfigError(f"invalid secret environment variables: {problems}") from None
+
+
 def load_settings(config_path: Path | str | None = None) -> Settings:
-    env = RuntimeEnv()
+    try:
+        env = RuntimeEnv()
+    except ValidationError as exc:
+        raise ConfigError(f"invalid environment: {exc}") from None
     app = load_app_config(config_path or env.clipforge_config)
-    return Settings(app=app, secrets=Secrets(), env=env)
+    return Settings(app=app, secrets=load_secrets(), env=env)

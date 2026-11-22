@@ -129,3 +129,22 @@ def test_style_allows_extra_keys() -> None:
     data["styles"]["bold-yellow"]["shadow"] = 2
     cfg = AppConfig.model_validate(data)
     assert cfg.styles["bold-yellow"].model_extra == {"shadow": 2}
+
+
+def test_empty_env_values_count_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_OWNER_CHAT_ID", "")
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.setenv("PUBLISH_MODE", "")
+    s = load_settings()
+    assert s.secrets.telegram_owner_chat_id is None
+    assert s.secrets.groq_api_key is None
+    assert s.publish_mode is PublishMode.DRY_RUN
+
+
+def test_secret_errors_never_echo_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_OWNER_CHAT_ID", "not-a-number-but-maybe-sensitive")
+    with pytest.raises(ConfigError) as info:
+        load_settings()
+    assert "TELEGRAM_OWNER_CHAT_ID" in str(info.value)
+    assert "maybe-sensitive" not in str(info.value)
+    assert info.value.__cause__ is None
