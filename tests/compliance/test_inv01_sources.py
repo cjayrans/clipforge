@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from clipforge.compliance import ComplianceError, assert_registered_source, classify_source_host
 from clipforge.config import Settings
 from clipforge.schemas import CampaignStatus, SourceHost
-from tests.compliance._helpers import campaign, xfail_until
+from tests.compliance._helpers import campaign
 from tests.support.factories import Factory
 
 DIRECT = "https://cdn.example.com/campaign/ep1.mp4"
@@ -91,7 +91,6 @@ def test_other_hosts_refused_even_if_registered() -> None:
         assert_registered_source(url, campaign(), [url])
 
 
-@xfail_until("Phase 1 A: clipforge.ingest.download.download_source")
 def test_downloader_refuses_youtube_source(factory: Factory, session: Session, settings: Settings) -> None:
     from clipforge.ingest.download import download_source  # type: ignore[attr-defined]
 

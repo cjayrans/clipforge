@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from clipforge.db import CampaignRow, SourceRow
-from clipforge.schemas import Campaign, CampaignIn, Source
+from sqlalchemy.orm import Session
+
+from clipforge.db import CampaignRow, SourceRow, record_event
+from clipforge.db.transitions import Actor
+from clipforge.schemas import Campaign, CampaignIn, Source, SourceStatus
 
 # CampaignIn field -> CampaignRow column, where they differ.
 _ROW_COLUMN: dict[str, str] = {"marketplace": "platform_marketplace"}
@@ -28,3 +31,29 @@ def source_from_row(row: SourceRow) -> Source:
     return Source.model_validate(
         {name: getattr(row, name) for name in Source.model_fields},
     )
+
+
+def set_source_status(
+    session: Session,
+    source: SourceRow,
+    status: SourceStatus,
+    *,
+    fail_reason: str | None = None,
+    detail: str = "",
+    actor: Actor = "system",
+) -> None:
+    """Change a source's status and write an `events` row (the audit log). `fail_reason` only with FAILED."""
+    old = source.status
+    source.status = status
+    source.fail_reason = fail_reason if status is SourceStatus.FAILED else None
+    session.flush()
+    record_event(
+        session,
+        "source",
+        source.id,
+        old.value if old is not None else None,
+        status.value,
+        actor=actor,
+        detail=detail or (fail_reason or ""),
+    )
+    session.flush()
