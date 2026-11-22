@@ -6,7 +6,8 @@ docs/contract-requests/<branch>.md instead. See docs/ARCHITECTURE.md for how eac
 
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -79,10 +80,27 @@ class PostState(StrEnum):
     FAILED = "failed"
 
 
+# Phase 0 addition (ARCHITECTURE.md §2). A retry re-sends the same post row (request_id = post id); no new state.
+POST_TRANSITIONS: dict[PostState, frozenset[PostState]] = {
+    PostState.QUEUED: frozenset({PostState.PUBLISHING, PostState.FAILED}),
+    PostState.PUBLISHING: frozenset({PostState.LIVE, PostState.FAILED}),
+    PostState.LIVE: frozenset(),
+    PostState.FAILED: frozenset(),
+}
+
+
 class SubmissionState(StrEnum):
     AWAITING = "awaiting"
     SUBMITTED = "submitted"
     MISSED = "missed"
+
+
+# Phase 0 addition (ARCHITECTURE.md §2).
+SUBMISSION_TRANSITIONS: dict[SubmissionState, frozenset[SubmissionState]] = {
+    SubmissionState.AWAITING: frozenset({SubmissionState.SUBMITTED, SubmissionState.MISSED}),
+    SubmissionState.SUBMITTED: frozenset(),
+    SubmissionState.MISSED: frozenset(),
+}
 
 
 class BrandDecision(StrEnum):
@@ -115,6 +133,23 @@ class CropMode(StrEnum):
     FACE = "face"
     CENTER = "center"
     FIT_BLUR = "fit_blur"
+
+
+class SourceHost(StrEnum):
+    """Phase 0 addition: how a source URL is classified (compliance.classify_source_host).
+
+    Downloadable: GDRIVE, DROPBOX, DIRECT, INBOX, and TWITCH only with campaign permission.
+    Never downloaded: YOUTUBE, KICK, OTHER.
+    """
+
+    GDRIVE = "gdrive"
+    DROPBOX = "dropbox"
+    TWITCH = "twitch"
+    DIRECT = "direct"
+    INBOX = "inbox"
+    YOUTUBE = "youtube"
+    KICK = "kick"
+    OTHER = "other"
 
 
 # --------------------------------------------------------------------------------------------------
@@ -168,6 +203,20 @@ class CampaignIn(BaseModel):
     def min_payout_for(self, platform: Platform) -> float:
         return self.min_payout_by_platform.get(platform, self.min_payout_usd)
 
+    @property
+    def slug(self) -> str:
+        """Phase 0 addition: filesystem-safe name, used for `inbox/<slug>/`."""
+        return slugify(self.name)
+
+
+def slugify(text: str) -> str:
+    """Phase 0 addition: lowercase ASCII words joined by '-'.
+
+    'AsianJeff Clipping (Reach)' -> 'asianjeff-clipping-reach'.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return slug or "campaign"
+
 
 class Campaign(CampaignIn):
     model_config = ConfigDict(extra="forbid")
@@ -175,6 +224,22 @@ class Campaign(CampaignIn):
     id: int
     status: CampaignStatus
     created_at: datetime
+
+
+class Source(BaseModel):
+    """Phase 0 addition: one registered footage file of a campaign (mirrors the `sources` table)."""
+
+    id: int
+    campaign_id: int
+    url: str = Field(description="Normalized URL as registered (http(s) or file://inbox/...).")
+    status: SourceStatus = SourceStatus.REGISTERED
+    sha256: str | None = None
+    local_path: str | None = None
+    duration_s: float | None = Field(default=None, ge=0)
+    fail_reason: str | None = Field(default=None, description="e.g. 'no_speech' (PRD F17), 'host_refused'.")
+    folder_url: str | None = Field(default=None, description="Folder link this file was listed from (PRD F17).")
+    downloaded_at: datetime | None = None
+    purged_at: datetime | None = None
 
 
 # --------------------------------------------------------------------------------------------------
@@ -341,6 +406,19 @@ class Approval(BaseModel):
 class Slot(BaseModel):
     at: datetime  # timezone-aware, America/New_York
     clip_id: int | None = None
+
+
+class Evening(BaseModel):
+    """Phase 0 addition: one publishing evening (mirrors the `evenings` table). Nothing publishes unless armed."""
+
+    date: date  # America/New_York calendar date
+    armed_at: datetime | None = None
+    skipped: bool = False
+    slots: list[Slot] = Field(default_factory=list)
+
+    @property
+    def armed(self) -> bool:
+        return self.armed_at is not None and not self.skipped
 
 
 class PublishRequest(BaseModel):
