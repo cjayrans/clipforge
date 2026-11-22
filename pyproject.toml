@@ -1,0 +1,109 @@
+[project]
+name = "clipforge"
+version = "0.1.0"
+description = "Semi-automated clipping pipeline for campaign-supplied footage, with human approval."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+# Every runtime dependency for v1 is declared here in Phase 0 so Phase 1 branches never edit this file.
+dependencies = [
+    "anthropic>=0.40",
+    "groq>=0.11",
+    "httpx>=0.27",
+    "tenacity>=8.2",
+    "python-telegram-bot>=21",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "apscheduler>=3.10,<4",
+    # No Intel-macOS wheels for current mediapipe / onnxruntime (faster-whisper): Linux (Docker, CI) only.
+    # Code must import them lazily; tests that need them use pytest.importorskip.
+    "mediapipe>=0.10.14; sys_platform == 'linux'",
+    "faster-whisper>=1.0; sys_platform == 'linux'",
+    "opencv-python-headless>=4.9",
+    "scenedetect>=0.6.4",
+    "gdown>=5.1",
+    "yt-dlp>=2024.8.6",
+    "numpy>=1.26",
+    "rich>=13.7",
+]
+
+[project.scripts]
+cf = "clipforge.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "respx>=0.21",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "freezegun>=1.5",
+    "hypothesis>=6.100",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clipforge"]
+
+[tool.uv]
+# Resolve only for the two places clipforge runs: the operator's Intel Mac (dev) and linux/amd64 (Docker, CI).
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+# scenedetect wants opencv-python and mediapipe wants opencv-contrib-python; both install the same `cv2/` package as
+# opencv-python-headless and would overwrite each other. Drop them; opencv-python-headless provides cv2 for all.
+override-dependencies = [
+    "opencv-python; sys_platform == 'never'",
+    "opencv-contrib-python; sys_platform == 'never'",
+]
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "PT", "C4"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["clipforge"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+strict = true
+warn_unreachable = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers -m 'not slow'"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+xfail_strict = true
+markers = [
+    "slow: long-running tests (real models, large media); run with `make test-slow`",
+    "needs_ffmpeg: requires ffmpeg/ffprobe on PATH (skipped when missing)",
+]
+filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
+
+[tool.coverage.run]
+source = ["clipforge"]
+branch = true
