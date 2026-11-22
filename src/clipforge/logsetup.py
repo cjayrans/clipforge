@@ -67,4 +67,5 @@ def setup_logging(secrets: Iterable[str] = (), *, level: int = logging.INFO) -> 
     root.setLevel(level)
     # httpx logs full request URLs at INFO; keep it at WARNING so query-string keys never reach the log.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("alembic").setLevel(logging.WARNING)
     return flt
