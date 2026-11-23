@@ -20,6 +20,8 @@ from clipforge.db import Base, make_engine, make_session_factory
 from tests.support.factories import Factory
 from tests.support.guards import LivePublishModeError, refuse_live_publish_mode
 
+pytest_plugins = ["tests.support.pipeline_fixtures"]
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE_CONFIG = REPO_ROOT / "config" / "clipforge.example.yaml"
 FIXTURES = REPO_ROOT / "tests" / "fixtures"

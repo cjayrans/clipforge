@@ -44,13 +44,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx2
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from clipforge import compliance, costs
 from clipforge.compliance import ComplianceError
 from clipforge.config import AccountSet, Settings
 from clipforge.db import (
+    ApprovalRow,
     CampaignRow,
     CandidateRow,
     ClipRow,
@@ -241,6 +242,16 @@ def _redact(settings: Settings, text: str) -> str:
 
 def _failed_checks(report: QAReport) -> str:
     return "; ".join(f"{c.name}: {c.detail}" if c.detail else c.name for c in report.checks if not c.passed)
+
+
+def fresh_render_time(session: Session, clip_id: int, now: datetime) -> datetime:
+    """`rendered_at` for a re-render: `now`, but always later than every decision already recorded for the clip, so an
+    earlier approval can never count for the new render even if the bot's and worker's clocks disagree (COMPLIANCE #5).
+    """
+    latest = session.scalar(select(func.max(ApprovalRow.decided_at)).where(ApprovalRow.clip_id == clip_id))
+    if latest is not None and latest >= now:
+        return latest + timedelta(seconds=1)
+    return now
 
 
 def _remove_render_dir(settings: Settings, clip_path: str) -> None:
@@ -741,11 +752,13 @@ def begin_rerender(
         clip = s.get(ClipRow, clip_id)
         if clip is None:
             raise RerenderRefused(f"Clip {clip_id} no longer exists.")
+        started = get_flag(s, f"{RERENDER_FLAG}{clip_id}")
+        if clip.state is ClipState.RENDERED or (
+            started is not None and now - datetime.fromisoformat(started) < STRANDED_AFTER
+        ):
+            raise RerenderRefused(f"Clip {clip_id} is already being re-rendered; wait for the new preview.")
         if clip.state not in REVIEWABLE:
             raise RerenderRefused(f"Clip {clip_id} is {clip.state.value}; it can no longer be changed.")
-        started = get_flag(s, f"{RERENDER_FLAG}{clip_id}")
-        if started is not None and now - datetime.fromisoformat(started) < STRANDED_AFTER:
-            raise RerenderRefused(f"Clip {clip_id} is already being re-rendered.")
         lin = lineage(s, clip)
         campaign = campaign_model(lin.campaign)
         if campaign.status is not CampaignStatus.ACTIVE:
@@ -844,7 +857,7 @@ def finish_rerender(
         clip.sha256 = manifest.sha256
         clip.duration_s = manifest.duration_s
         clip.qa_report_json = report.model_dump(mode="json")
-        clip.rendered_at = now  # every earlier approval is now stale (COMPLIANCE #5)
+        clip.rendered_at = fresh_render_time(s, clip.id, now)  # earlier approvals are now stale (COMPLIANCE #5)
         if job.kind == "new_hook":
             old_hook = cand.hook
             cand.hook = hook
@@ -881,7 +894,7 @@ def restore_after_failed_rerender(
             return
         report = _requalify(settings, deps, s, clip)
         clip.qa_report_json = report.model_dump(mode="json")
-        clip.rendered_at = now
+        clip.rendered_at = fresh_render_time(s, clip.id, now)
         if report.passed:
             transition(s, clip, ClipState.PENDING_REVIEW, detail=f"re-render failed, previous version kept: {reason}")
         else:
