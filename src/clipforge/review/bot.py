@@ -15,7 +15,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from functools import wraps
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -35,6 +35,7 @@ from clipforge.db import make_engine, make_session_factory, session_scope
 from clipforge.db.migrate import upgrade
 from clipforge.review import keyboards
 from clipforge.review.deliver import check_worker_heartbeat, deliver_pending_alerts
+from clipforge.review.evening import arm_evening, mark_missed, mark_submitted, skip_from_button
 from clipforge.review.notify import Notifier, notifier_from_settings
 from clipforge.review.previews import send_pending_previews
 from clipforge.review.service import (
@@ -199,12 +200,44 @@ async def _shorter(deps: BotDeps, parts: list[str], message_id: int | None) -> O
     return Outcome("Working...", clear_keyboard=False, reply=await deps.hooks.shorter(clip_id))
 
 
+async def _arm(deps: BotDeps, parts: list[str], message_id: int | None) -> Outcome:
+    day = date.fromisoformat(parts[0])  # ValueError -> "Unknown button"
+    with session_scope(deps.factory) as session:
+        arm_evening(session, deps.settings, deps.clock(), day=day)
+        queue = queue_text(session, deps.settings, deps.clock())
+    return Outcome("Armed", reply=f"Armed for tonight. Slots publish on time.\n{queue}")
+
+
+async def _skip(deps: BotDeps, parts: list[str], message_id: int | None) -> Outcome:
+    day = date.fromisoformat(parts[0])
+    with session_scope(deps.factory) as session:
+        skip_from_button(session, deps.settings, deps.clock(), day=day)
+    return Outcome("Skipped", reply="Tonight is skipped. Nothing will publish.")
+
+
+async def _submitted(deps: BotDeps, parts: list[str], message_id: int | None) -> Outcome:
+    with session_scope(deps.factory) as session:
+        sub = mark_submitted(session, keyboards.int_part(parts), deps.clock())
+        late = " (after the deadline)" if "after the deadline" in sub.note else ""
+    return Outcome("Marked submitted", reply=f"Submission {sub.id}: submitted{late}.")
+
+
+async def _missed(deps: BotDeps, parts: list[str], message_id: int | None) -> Outcome:
+    with session_scope(deps.factory) as session:
+        sub = mark_missed(session, keyboards.int_part(parts), deps.clock())
+    return Outcome("Marked missed", reply=f"Submission {sub.id}: marked missed.")
+
+
 ACTION_HANDLERS: dict[str, ActionHandler] = {
     keyboards.APPROVE: _approve,
     keyboards.REJECT: _reject_menu,
     keyboards.REJECT_REASON: _reject,
     keyboards.NEW_HOOK: _new_hook,
     keyboards.SHORTER: _shorter,
+    keyboards.ARM: _arm,
+    keyboards.SKIP: _skip,
+    keyboards.SUBMITTED: _submitted,
+    keyboards.MISSED: _missed,
 }
 
 

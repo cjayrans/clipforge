@@ -274,7 +274,7 @@ def _send_post(
         return result
     post.upload_post_job = result.upload_post_ref
     if settings.publish_mode is PublishMode.DRY_RUN and result.post_url:
-        _go_live(session, settings, post, lin.campaign.id, result.post_url, result.published_at or now)
+        _go_live(session, settings, post, lin.campaign.id, result.post_url, now)
     session.commit()
     return result
 
