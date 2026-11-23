@@ -42,10 +42,16 @@ def set_source_status(
     detail: str = "",
     actor: Actor = "system",
 ) -> None:
-    """Change a source's status and write an `events` row (the audit log). `fail_reason` only with FAILED."""
+    """Change a source's status and write an `events` row (the audit log).
+
+    `fail_reason` is set with FAILED, kept on PURGED, and cleared otherwise.
+    """
     old = source.status
     source.status = status
-    source.fail_reason = fail_reason if status is SourceStatus.FAILED else None
+    if status is SourceStatus.FAILED:
+        source.fail_reason = fail_reason
+    elif status is not SourceStatus.PURGED:  # a purged source keeps why it failed
+        source.fail_reason = None
     session.flush()
     record_event(
         session,
