@@ -11,5 +11,6 @@ Modules:
 - `evening` arm message, arming, Submit-now, reminders, Submitted/Missed
 - `previews` review videos; `deliver` alert delivery + worker watchdog; `alerts` how any module raises an operator alert
   (an `events` row with entity "alert"); `notify` the one Telegram sender (bot and worker); `views` message text
-- Phase 2 wires the "New hook" / "Shorter" buttons by passing `service.ReviewHooks` to `bot.run_bot`.
+- "New hook" / "Shorter" are wired in Phase 2: `bot.run_bot` builds `pipeline.make_review_hooks` (re-render in the
+  background; the new preview needs a fresh approval).
 """

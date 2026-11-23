@@ -104,16 +104,16 @@ def skip_tonight(session: Session, settings: Settings, now: datetime) -> Evening
 
 
 async def _new_hook_not_wired(clip_id: int) -> str:
-    return f"New hook for clip {clip_id} is wired in Phase 2 (rank.copy + re-render). Nothing changed."
+    return f"New hook is not available in this process (`cf bot` wires it). Clip {clip_id} is unchanged."
 
 
 async def _shorter_not_wired(clip_id: int) -> str:
-    return f"Shorter for clip {clip_id} is wired in Phase 2 (trim + re-render). Nothing changed."
+    return f"Shorter is not available in this process (`cf bot` wires it). Clip {clip_id} is unchanged."
 
 
 @dataclass
 class ReviewHooks:
-    """Callbacks Phase 2 wires: they re-run rank.copy / render, send the new preview, and return a status line.
+    """New hook / Shorter callbacks (`pipeline.make_review_hooks`): start a re-render and return a status line.
 
     A re-render must update `clip.rendered_at` and move the clip back through RENDERED -> PENDING_REVIEW, so the old
     approval is stale and the bot sends a fresh preview (docs/contract-requests/ops.md).

@@ -447,11 +447,16 @@ def build_application(
 
 
 def run_bot(settings: Settings, *, hooks: ReviewHooks | None = None) -> None:
-    """`cf bot`: run the bot until stopped."""
+    """`cf bot`: run the bot until stopped. New hook / Shorter use `pipeline.make_review_hooks` (Phase 2)."""
     upgrade(settings.database_url)
     engine = make_engine(settings.database_url)
     try:
-        app = build_application(settings, factory=make_session_factory(engine), hooks=hooks)
+        factory = make_session_factory(engine)
+        if hooks is None:
+            from clipforge.pipeline import make_review_hooks  # lazy: the pipeline imports review modules
+
+            hooks = make_review_hooks(settings, factory)
+        app = build_application(settings, factory=factory, hooks=hooks)
         log.info("bot starting (publish mode %s)", settings.publish_mode.value)
         app.run_polling(allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])
     finally:

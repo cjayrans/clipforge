@@ -5,11 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from clipforge import costs
 from clipforge.config import AppConfig, Settings
-from tests.compliance._helpers import xfail_until
+from clipforge.db import EventRow, make_engine, make_session_factory
+from clipforge.db.migrate import upgrade
 
 NOW = datetime(2026, 11, 22, 18, 0, tzinfo=UTC)
 
@@ -43,11 +45,23 @@ def test_resume_does_not_bypass_cap(app_config: AppConfig, session: Session) -> 
         costs.guard(session, app_config, now=NOW)
 
 
-@xfail_until("Phase 2: clipforge.pipeline.run_once")
-def test_pipeline_pauses_at_cap(settings: Settings, session: Session) -> None:
-    from clipforge.pipeline import run_once  # type: ignore[attr-defined]
+def test_pipeline_pauses_at_cap(settings: Settings) -> None:
+    """At the cap, the nightly run pauses before any paid stage and records the pause once (the bot delivers it)."""
+    from clipforge.pipeline import run_once
 
-    _spend(session, settings.app, 15.0)
-    session.commit()
-    run_once(settings)
-    assert costs.is_paused(session) is not None
+    # Phase 2: the session must use the database run_once opens (the generic `session` fixture is a separate file).
+    upgrade(settings.database_url)
+    engine = make_engine(settings.database_url)
+    session = make_session_factory(engine)()
+    try:
+        _spend(session, settings.app, 15.0)
+        session.commit()
+        report = run_once(settings)
+        assert report.paused is not None
+        assert costs.is_paused(session) is not None
+        run_once(settings)  # still paused: no second pause event, so no second alert
+        pauses = session.scalars(select(EventRow).where(EventRow.entity == "pipeline", EventRow.to_state == "paused"))
+        assert len(list(pauses)) == 1
+    finally:
+        session.close()
+        engine.dispose()

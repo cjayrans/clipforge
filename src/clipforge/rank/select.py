@@ -93,3 +93,61 @@ def select_candidates(
         )
         out.append(Selection(candidate=candidate, window=w, text=text or w.text, effective_score=effective))
     return out
+
+
+# --------------------------------------------------------------------------------------------------
+# "Shorter" (bot button, ARCHITECTURE §4.6): trim 20% from the weaker end using word timestamps
+# --------------------------------------------------------------------------------------------------
+
+SHORTER_FRACTION = 0.2
+SENTENCE_SNAP_S = 3.0  # a cut may move up to this much further inward to land on a sentence boundary
+_SENTENCE_END = (".", "?", "!", "…")
+
+
+def _ends_sentence(word: Word) -> bool:
+    return word.text.rstrip().rstrip("\"')]").endswith(_SENTENCE_END)
+
+
+def shorter_range(
+    words: Sequence[Word],
+    start_s: float,
+    end_s: float,
+    *,
+    min_clip_s: float,
+    fraction: float = SHORTER_FRACTION,
+) -> tuple[float, float]:
+    """New (start, end) at most `1 - fraction` of the current length, cut from the weaker end (pure).
+
+    Both cuts are tried: dropping the tail (new end on a word end) and dropping the head (new start on a word start).
+    Each snaps inward to a sentence boundary when one lies within `SENTENCE_SNAP_S`. The weaker end is the one whose
+    cut part holds fewer words (less speech is lost); a tie trims the end. Raises ValueError if the result would be
+    shorter than `min_clip_s`.
+    """
+    if not 0 < fraction < 1:
+        raise ValueError("fraction must be between 0 and 1")
+    if end_s <= start_s:
+        raise ValueError("end must be after start")
+    target = (end_s - start_s) * (1 - fraction)
+    if target < min_clip_s:
+        raise ValueError(f"clip is {end_s - start_s:.1f}s; 20% shorter would be under the {min_clip_s:.0f}s minimum")
+    inside = [w for w in words if start_s <= (w.start_s + w.end_s) / 2 <= end_s]
+
+    # Option A: cut the tail.
+    limit = start_s + target
+    ends = [w for w in inside if w.end_s <= limit and w.end_s - start_s >= min_clip_s]
+    snapped = [w.end_s for w in ends if _ends_sentence(w) and w.end_s >= limit - SENTENCE_SNAP_S]
+    new_end = max(snapped) if snapped else (max(w.end_s for w in ends) if ends else limit)
+
+    # Option B: cut the head (a new start follows a sentence end when one is close).
+    limit = end_s - target
+    starts = [(i, w) for i, w in enumerate(inside) if w.start_s >= limit and end_s - w.start_s >= min_clip_s]
+    snapped = [
+        w.start_s for i, w in starts if i > 0 and _ends_sentence(inside[i - 1]) and w.start_s <= limit + SENTENCE_SNAP_S
+    ]
+    new_start = min(snapped) if snapped else (min(w.start_s for _, w in starts) if starts else limit)
+
+    lost_tail = sum(1 for w in inside if (w.start_s + w.end_s) / 2 > new_end)
+    lost_head = sum(1 for w in inside if (w.start_s + w.end_s) / 2 < new_start)
+    if lost_head < lost_tail:
+        return min(max(round(new_start, 3), start_s), end_s - min_clip_s), end_s
+    return start_s, max(min(round(new_end, 3), end_s), start_s + min_clip_s)
