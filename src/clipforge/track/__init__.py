@@ -6,4 +6,7 @@ Entry points other code already expects (keep these names):
 - `track.reports.weekly_report(session, settings) -> pathlib.Path`        (`cf report weekly`)
 - `track.reconcile.export_csv(session, settings, path) -> int`            (`cf export-reconcile`)
 - `track.reconcile.import_csv(session, settings, path) -> int`            (`cf import-reconcile`)
+
+Also: `track.reconcile.import_rows` (same, raising `ReconcileError`), `track.youtube_views.snapshot_youtube_views`,
+`track.learning.run_weekly_learning`, `track.reports.monthly_report`.
 """
