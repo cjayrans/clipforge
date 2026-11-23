@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # ffmpeg (Debian build includes libx264 and libass), fonts, tz database for America/New_York.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core tzdata ca-certificates \
+    && apt-get install -y --no-install-recommends ffmpeg libegl1 libgles2 fonts-dejavu-core tzdata ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.13.9 /uv /uvx /bin/
