@@ -1,5 +1,7 @@
 # Contract requests from `feat/rank` (Phase 1 B)
 
+**Status (Phase 2):** 1 done (Dockerfile), 2–4 done (CLAUDE.md / ARCHITECTURE wording), 7 done (pipeline passes the session factory and never holds a write while ranking; Groq got the same ledger). 5 (energy input) and 6 (`rank:` config) deferred; 8 informational. Details: docs/pr-descriptions/phase2.md.
+
 `schemas.py` needs no change. The requests below touch files Phase 1 branches may not edit (Dockerfile, config,
 CLAUDE.md, ARCHITECTURE.md), or record facts that contradict them.
 

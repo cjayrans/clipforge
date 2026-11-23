@@ -1,5 +1,7 @@
 # Contract requests from `feat/ops` (Phase 1 D)
 
+**Status (Phase 2): all resolved.** 1 WAL on, 2 the pipeline builds `<clip>.preview.mp4`, 3 `captions_json` stored as `{platform: text}`, 4 re-render semantics implemented in `pipeline.begin_rerender/finish_rerender`, 5 alerts and pause delivered by the bot, 6 and 7 written into ARCHITECTURE §4.9 / §4.7 (the TikTok `SELF_ONLY` question stays open for the operator). Details: docs/pr-descriptions/phase2.md.
+
 `schemas.py` needs no change. Nothing below blocks this branch; each item is either a convention another branch must
 meet, or a change to a file Phase 1 branches may not edit (db/, Dockerfile, ARCHITECTURE.md).
 

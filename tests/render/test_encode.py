@@ -70,6 +70,8 @@ def test_codec_settings_match_architecture(app_config: AppConfig) -> None:
     assert value(args, "-c:a") == "aac"
     assert value(args, "-b:a") == "128k"
     assert value(args, "-af").startswith("loudnorm=I=-14:TP=-1.5:LRA=11")
+    # ffmpeg 5.1 (Debian bookworm, the Docker image) needs the layout pinned before AAC (Phase 2 finding).
+    assert value(args, "-af").endswith(",aformat=sample_fmts=fltp:channel_layouts=mono|stereo")
 
 
 def test_filtergraph_per_shot_crop_and_fit_blur() -> None:

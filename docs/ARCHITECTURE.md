@@ -81,14 +81,19 @@ an `events` row.
 - `windows.py` (pure): build windows 20–75 s aligned to segment boundaries, stride ~10 s; pre-score by speech density,
   question→answer patterns, and audio energy peaks (ffmpeg `astats`/`ebur128` per second, computed in transcribe or
   render utils). Keep top 60.
-- `score.py`: Haiku, batches of 10 windows, forced tool `score_windows` with JSON schema from
+- `score.py`: Haiku, batches of 10 windows, forced strict tool `score_windows` with JSON schema from
   `schemas.WindowScore`. Prompt inputs: campaign brief summary + rules, few-shots (`fewshots` table), windows text.
-- `copy.py`: Sonnet for the top N (`rank.top_n_per_source`, default 8): `schemas.ClipCopy` = hook (≤ 8 words),
+- `copy.py`: Sonnet for the top N (`rank.top_n_per_source`, default 8) via structured outputs
+  (`output_config.format` JSON schema; Sonnet 5.5 rejects forced tool choice): `schemas.ClipCopy` = hook (≤ 8 words),
   youtube_title (≤ 60 chars), captions per platform. `compliance.normalize_caption` then forces `#ad` first, appends
   required campaign tags, strips URLs for X, enforces platform length limits.
 - Prompts live in `prompts/*.md` with a `version:` header; the version is stored on each candidate.
-- `evals/`: harness that runs scoring on fixture transcripts and checks schema validity, determinism at temperature 0,
-  and ranking agreement with Carson's labels (`evals/labels.csv`, filled over time).
+- `evals/`: harness that runs scoring on fixture transcripts and checks schema validity, top-k stability across
+  repeated runs (Haiku/Sonnet 5.5 reject `temperature`, so there is no temperature 0), and ranking agreement with
+  Carson's labels (`evals/labels.csv`, filled over time).
+- `ClaudeClient` takes a session factory (`ledger=`): each spend-cap check and cost row commits in its own short
+  transaction, so a caller's rollback can't erase real spend. Callers must not hold an uncommitted SQLite write while
+  calling it.
 
 ### 4.4 render
 - `shots.py`: PySceneDetect `ContentDetector` on the candidate range → shot list.
@@ -113,8 +118,14 @@ an `events` row.
 - Preview: `send_video` (≤ 50 MB; else a 480p proxy rendered for preview) with caption: campaign, score, hook,
   platforms, duration. Inline keyboard: Approve / Reject (reason menu: off-brief, boring, bad crop, bad captions,
   other) / New hook / Shorter.
-- New hook → re-run `rank.copy` for that clip and re-render overlays only. Shorter → trim 20% from the weaker end
-  using word timestamps, re-render.
+- New hook → re-run `rank.copy.write_copy` for that clip, then a full re-render (overlays are burned in).
+  Shorter → `rank.select.shorter_range` trims 20% from the weaker end (fewer words lost) on word/sentence
+  boundaries, then a full re-render. Both run in the background (`pipeline.make_review_hooks`, wired by `cf bot`);
+  the button is answered at once. The clip moves to RENDERED before any paid call (a SCHEDULED clip is released
+  from its slot first), the new file goes into a new `r<stamp>` folder, and on success `rendered_at` is set later
+  than every earlier decision and the clip returns to PENDING_REVIEW: earlier approvals are stale (invariant 5) and
+  the bot sends a new preview. Any failure (including QA) keeps the old file and returns it to review with a new
+  `rendered_at`, so it needs a fresh tap too.
 - Evening: 20:00 Arm message (`evenings` row); Submit-now messages with Submitted/Missed; +20 min reminder.
 - `/reconcile`: iterate open submissions (oldest first), buttons Approved/Rejected/Pending/Paid, then
   "reply with $ amount or 0".
@@ -135,6 +146,17 @@ an `events` row.
   - X: `made_with_ai=false`; caption must contain no URLs (Upload-Post strips them anyway).
   - Never send `first_comment`.
   Auth header and status/URL endpoint: take from the docs (do not guess). TikTok post URLs can take ~3 min to appear.
+  Verified 2026-11-22 (Phase 1 D, `publish/upload_post.py`): header `Authorization: Apikey <key>` plus
+  `Idempotency-Key` (= post id); TikTok and Instagram captions travel in `tiktok_title` / `instagram_title`
+  (`description` is ignored for them); YouTube uses `youtube_title` (we prefix `#ad `) and `youtube_description`; X
+  uses `x_title` and also sets `x_paid_partnership`. Status: `GET /api/uploadposts/status?request_id=`; the URL field
+  inside a result is not documented, so the parser accepts `post_url` or `url`.
+  **Open question (operator decision before the Phase 3 private run):** TikTok may reject branded content
+  (`brand_content_toggle=true`) when `privacy_level=SELF_ONLY`. Upload-Post documents that `paid_partnership=true`
+  with `SELF_ONLY` returns 400 `commercial_disclosure_privacy_conflict`; it does not say what TikTok does with the
+  branded-content toggle. If the private run fails this way, the options are a private test without the branded flag
+  on a throwaway account, or a one-clip public run Carson approves. Invariant 4 stays as it is unless Carson approves
+  a change in a PR.
 - `dispatcher.py`: every 30 s; for each slot within the next 60 s on an **armed** evening, publish its posts; then poll
   status every 30 s for up to 10 min; on URL → `posts.state=LIVE`, create `submissions` row with
   `deadline_at = published_at + 30 min` and notify the bot via DB flag. Unarmed at first slot → mark evening skipped,
@@ -156,7 +178,7 @@ an `events` row.
 | purge_sources | 03:30 daily |
 | backup_db | 04:00 daily |
 | youtube_views | 12:00 daily |
-| arm_message | 20:00 Mon–Fri; weekend times from config |
+| arm_message | every 60 s; sends once per evening between `first slot − arm_message_minutes_before_first_slot` and the first slot (a failed send is retried) |
 | slot_dispatcher | every 30 s |
 | url_poller | every 30 s |
 | submit_reminders | every 60 s |
@@ -164,6 +186,17 @@ an `events` row.
 | weekly_learning | Sat 08:15 |
 | monthly_report | first Sun 08:00 |
 | heartbeat | every 60 s |
+
+### 4.9b pipeline (nightly orchestration, `pipeline.run_once`)
+`costs.guard()` → `scan_inbox` → sweeps (expire clips of drained/ended campaigns; recover clips a crashed re-render
+left in RENDERED) → render leftover candidates → per source of an active campaign (priority, then oldest; at most
+`max_sources_per_night`): download → guard → transcribe → guard → rank → render the new candidates. Stops once
+`nightly_candidate_target` clips passed QA in this run; the rest stay CANDIDATE for the next night. Each stage is
+isolated: an expected failure is recorded by its module and the run moves on; an unexpected one is rolled back and
+alerted. `SpendCapReached` anywhere pauses the run (one pause event, delivered by the bot). Clips are rendered for the
+first account set whose platforms the campaign allows (one clip per candidate), into
+`media/clips/<slug>/<account set>/r<stamp>/`. A render failure is retried once (next night), then the candidate
+expires. A run that produces no clips sends an alert saying why.
 
 ### 4.10 costs
 `costs.record(service, model, units, unit_kind)` using prices in config; `costs.guard()` raises `SpendCapReached`
