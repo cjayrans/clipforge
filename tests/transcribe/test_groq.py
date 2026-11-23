@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pytest
@@ -17,10 +14,11 @@ from tenacity import wait_none
 from clipforge import costs
 from clipforge.config import Settings, load_settings
 from clipforge.db import CostRow, EventRow, FlagRow, TranscriptRow
-from clipforge.schemas import Segment, SourceStatus, Word
+from clipforge.schemas import SourceStatus
 from clipforge.transcribe import chunker, groq_client, service
 from clipforge.transcribe.groq_client import ChunkOutput, GroqTranscriber, TranscriberError
 from tests.support.factories import Factory
+from tests.transcribe.helpers import FakeTranscriber, downloaded_source, fake_runner
 
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 FAKE_KEY = "test-groq-key-not-a-real-one"
@@ -187,49 +185,8 @@ def test_spend_cap_checked_before_calling(session: Session, keyed_settings: Sett
 # --- transcribe_source with fakes ---------------------------------------------------------------------
 
 
-def fake_runner(audio_duration: float) -> Any:
-    """Fake ffmpeg (writes the output file) and ffprobe (reports `audio_duration`)."""
-    calls: list[list[str]] = []
-
-    def run(args: Sequence[str]) -> str:
-        calls.append(list(args))
-        if args[0] == "ffmpeg":
-            Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
-            Path(args[-1]).write_bytes(b"mp3")
-            return ""
-        return json.dumps({"format": {"duration": str(audio_duration)}, "streams": [{"codec_type": "audio"}]})
-
-    run.calls = calls  # type: ignore[attr-defined]
-    return run
-
-
-class FakeTranscriber:
-    """Hears one word every 0.5 s of each chunk (chunk-relative timestamps), like a real backend."""
-
-    provider = "groq"
-    model = "whisper-large-v3-turbo"
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, float]] = []
-
-    def transcribe_chunk(self, path: Path, duration_s: float) -> ChunkOutput:
-        self.calls.append((path.name, duration_s))
-        n = int(duration_s / 0.5)
-        words = [Word(text=f"w{i}", start_s=i * 0.5, end_s=i * 0.5 + 0.3) for i in range(n)]
-        return ChunkOutput(
-            words=words, segments=[Segment(text="seg", start_s=0.0, end_s=duration_s)], language="en", cost_usd=0.01
-        )
-
-
-def _downloaded(factory: Factory, settings: Settings, duration: float = 90.0) -> Any:
-    media_file = settings.media_dir / "sources" / "x.mp4"
-    media_file.parent.mkdir(parents=True, exist_ok=True)
-    media_file.write_bytes(b"video")
-    return factory.source(status=SourceStatus.DOWNLOADED, local_path=str(media_file), duration_s=duration)
-
-
 def test_transcribe_source_single_chunk(session: Session, settings: Settings, factory: Factory) -> None:
-    src = _downloaded(factory, settings)
+    src = downloaded_source(factory, settings)
     fake = FakeTranscriber()
     runner = fake_runner(90.0)
     t = service.transcribe_source(session, settings, src, transcriber=fake, runner=runner)
@@ -250,7 +207,7 @@ def test_transcribe_source_multi_chunk(
     session: Session, settings: Settings, factory: Factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(service, "plan_chunks", lambda d: chunker.plan_chunks(d, max_bytes=200_000))  # 45 s chunks
-    src = _downloaded(factory, settings, 200.0)
+    src = downloaded_source(factory, settings, 200.0)
     fake = FakeTranscriber()
     t = service.transcribe_source(session, settings, src, transcriber=fake, runner=fake_runner(200.0))
     assert len(fake.calls) == 5
@@ -269,7 +226,7 @@ def test_not_downloaded_refused(session: Session, settings: Settings, factory: F
 
 
 def test_backend_failure_alerts_and_keeps_status(session: Session, settings: Settings, factory: Factory) -> None:
-    src = _downloaded(factory, settings)
+    src = downloaded_source(factory, settings)
 
     class Broken(FakeTranscriber):
         def transcribe_chunk(self, path: Path, duration_s: float) -> ChunkOutput:
@@ -284,7 +241,7 @@ def test_backend_failure_alerts_and_keeps_status(session: Session, settings: Set
 
 
 def test_spend_cap_propagates(session: Session, keyed_settings: Settings, factory: Factory) -> None:
-    src = _downloaded(factory, keyed_settings)
+    src = downloaded_source(factory, keyed_settings)
     costs.pause(session, "spend cap")
     with pytest.raises(costs.SpendCapReached):
         service.transcribe_source(session, keyed_settings, src, runner=fake_runner(90))

@@ -5,6 +5,9 @@ Entry point for the pipeline (Phase 2): `transcribe_source(session, settings, so
 On success the transcript JSON is written to `media_dir/transcripts/<source_id>.json`, a `transcripts` row records
 provider, model and cost, and the source becomes TRANSCRIBED (events row). Temporary audio is deleted.
 
+No-speech guard (PRD F17): under 20 words per minute the transcript is still stored, but the source becomes FAILED
+with `fail_reason="no_speech"` and the operator is alerted. Rank only sources whose status is TRANSCRIBED.
+
 Errors: `costs.SpendCapReached` propagates untouched (the pipeline pauses). Any other failure raises
 `TranscriberError` after writing an operator alert; the source stays DOWNLOADED so the next night retries it. Commit
 the session after catching it.
@@ -27,6 +30,7 @@ from clipforge.schemas import SourceStatus, Transcript
 from clipforge.transcribe import audio
 from clipforge.transcribe.chunker import ChunkResult, merge_chunks, plan_chunks
 from clipforge.transcribe.groq_client import ChunkOutput, GroqTranscriber, TranscriberError
+from clipforge.transcribe.guard import NO_SPEECH_REASON, NO_SPEECH_WPM, is_no_speech, words_per_minute
 
 log = logging.getLogger(__name__)
 
@@ -129,10 +133,24 @@ def _store(session: Session, settings: Settings, source: SourceRow, transcript: 
         )
     )
     session.flush()
+    wpm = words_per_minute(transcript)
+    if is_no_speech(transcript):
+        # PRD F17: keep the (paid-for) transcript for the record, but never rank this source.
+        set_source_status(
+            session, source, SourceStatus.FAILED, fail_reason=NO_SPEECH_REASON, detail=f"{wpm:.1f} words/min"
+        )
+        alerts.alert_operator(
+            session,
+            alerts.NO_SPEECH,
+            source.id,
+            f"source {source.id} has {wpm:.1f} words/min (< {NO_SPEECH_WPM:.0f}); v1 needs narrated or commentary "
+            "footage, so it will not be ranked",
+        )
+        return transcript
     set_source_status(
         session,
         source,
         SourceStatus.TRANSCRIBED,
-        detail=f"{transcript.provider} {len(transcript.words)} words ${cost:.4f}",
+        detail=f"{transcript.provider} {len(transcript.words)} words ({wpm:.0f}/min) ${cost:.4f}",
     )
     return transcript
