@@ -44,12 +44,6 @@ def test_help_lists_every_command() -> None:
 @pytest.mark.parametrize(
     ("args", "owner"),
     [
-        (["campaign", "add", "--from-json", str(REPO / "campaigns" / "asianjeff-gta6.json")], "Phase 1 A"),
-        (["campaign", "list"], "Phase 1 A"),
-        (["campaign", "drain", "1"], "Phase 1 A"),
-        (["campaign", "end", "1"], "Phase 1 A"),
-        (["campaign", "check", "1"], "Phase 1 A"),
-        (["source", "add", "1", "https://cdn.example.com/a.mp4"], "Phase 1 A"),
         (["worker"], "Phase 1 D"),
         (["bot"], "Phase 1 D"),
         (["report", "weekly"], "Phase 1 D"),
@@ -66,7 +60,10 @@ def test_later_phase_commands_name_their_owner(args: list[str], owner: str) -> N
 
 
 def test_every_target_is_known_to_be_missing_now() -> None:
-    for command in cli.TARGETS:
+    # Phase 1 A implemented ingest.* (tests in tests/ingest/test_cli_campaign.py).
+    for command, target in cli.TARGETS.items():
+        if target.module.startswith("ingest."):
+            continue
         with pytest.raises(cli.NotImplementedYet):
             cli.resolve(command)
 
