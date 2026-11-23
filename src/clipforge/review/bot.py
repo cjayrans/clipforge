@@ -26,7 +26,9 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
     TypeHandler,
+    filters,
 )
 
 from clipforge import heartbeat
@@ -46,7 +48,15 @@ from clipforge.review.service import (
     skip_tonight,
 )
 from clipforge.review.views import costs_text, queue_text, status_text
-from clipforge.schemas import RejectReason
+from clipforge.schemas import BrandDecision, RejectReason
+from clipforge.track.reconcile import (
+    ReconcileError,
+    apply_amount_reply,
+    choose_decision,
+    clear_pending_amount,
+    next_open_submission,
+    reconcile_prompt,
+)
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +88,7 @@ class Outcome:
     markup: InlineKeyboardMarkup | None = None
     clear_keyboard: bool = True
     reply: str | None = None
+    reply_markup: InlineKeyboardMarkup | None = None
 
 
 ActionHandler = Callable[[BotDeps, list[str], int | None], Awaitable[Outcome]]
@@ -259,6 +270,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     except StaleAction as exc:
         await query.answer(str(exc)[:200], show_alert=True)
         return
+    except ReconcileError as exc:
+        await query.answer(exc.message[:200], show_alert=True)
+        return
     except ValueError:
         await query.answer("Unknown button", show_alert=True)
         return
@@ -267,7 +281,74 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         with contextlib.suppress(Exception):  # message may be too old to edit; the action already happened
             await query.edit_message_reply_markup(reply_markup=outcome.markup)
     if outcome.reply and query.message is not None:
-        await query.message.reply_text(outcome.reply)
+        if outcome.reply_markup is not None:
+            await query.message.reply_text(outcome.reply, reply_markup=outcome.reply_markup)
+        else:
+            await query.message.reply_text(outcome.reply)
+
+
+# --------------------------------------------------------------------------------------------------
+# /reconcile (PRD §4.4): walk the open submissions, oldest first
+# --------------------------------------------------------------------------------------------------
+
+
+def _next_prompt(deps: BotDeps) -> tuple[str, InlineKeyboardMarkup | None]:
+    with session_scope(deps.factory) as session:
+        sub = next_open_submission(session)
+        if sub is None:
+            return "Nothing left to reconcile.", None
+        return reconcile_prompt(session, sub, deps.settings), keyboards.reconcile_keyboard(sub.id)
+
+
+@owner_only
+async def cmd_reconcile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    deps = _deps(context)
+    with session_scope(deps.factory) as session:
+        clear_pending_amount(session)  # a fresh walk drops an unanswered amount question
+    text, markup = _next_prompt(deps)
+    if update.effective_message is not None:
+        await update.effective_message.reply_text(text, reply_markup=markup)
+
+
+async def _reconcile(deps: BotDeps, parts: list[str], message_id: int | None) -> Outcome:
+    sub_id = keyboards.int_part(parts)
+    try:
+        decision = BrandDecision(parts[1])
+    except (IndexError, ValueError) as exc:
+        raise ValueError("bad decision") from exc
+    with session_scope(deps.factory) as session:
+        needs_amount = choose_decision(session, sub_id, decision, deps.clock())
+    if needs_amount:
+        return Outcome(decision.value.capitalize(), reply="Reply with the total $ amount paid so far, or 0.")
+    text, markup = _next_prompt(deps)
+    return Outcome(decision.value.capitalize(), reply=text, reply_markup=markup)
+
+
+ACTION_HANDLERS[keyboards.RECONCILE] = _reconcile
+
+
+@owner_only
+async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """A plain message from the owner is the answer to an open "$ amount" question, if there is one."""
+    deps = _deps(context)
+    message = update.effective_message
+    text = getattr(message, "text", None)
+    if message is None or not text:
+        return
+    try:
+        with session_scope(deps.factory) as session:
+            sub = apply_amount_reply(session, text, deps.clock())
+            saved = None if sub is None else f"Saved: #{sub.id} {sub.brand_decision.value}, paid ${sub.paid_usd:.2f}."
+    except ValueError:
+        await message.reply_text("Send the amount as a number, like 12.50 or 0.")
+        return
+    except ReconcileError as exc:
+        await message.reply_text(exc.message)
+        return
+    if saved is None:
+        return  # no open question: ignore chatter
+    prompt, markup = _next_prompt(deps)
+    await message.reply_text(f"{saved}\n\n{prompt}", reply_markup=markup)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -328,9 +409,11 @@ def register_handlers(app: Application) -> None:  # type: ignore[type-arg]
         ("queue", cmd_queue),
         ("costs", cmd_costs),
         ("skip", cmd_skip),
+        ("reconcile", cmd_reconcile),
     ):
         app.add_handler(CommandHandler(name, fn))
     app.add_handler(CallbackQueryHandler(on_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
 
 def build_application(

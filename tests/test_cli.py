@@ -51,9 +51,6 @@ def test_help_lists_every_command() -> None:
         (["campaign", "check", "1"], "Phase 1 A"),
         (["source", "add", "1", "https://cdn.example.com/a.mp4"], "Phase 1 A"),
         (["worker"], "Phase 1 D"),
-        (["report", "weekly"], "Phase 1 D"),
-        (["export-reconcile"], "Phase 1 D"),
-        (["import-reconcile", str(REPO / "README.md")], "Phase 1 D"),
         (["run", "--once"], "Phase 2"),
     ],
 )
