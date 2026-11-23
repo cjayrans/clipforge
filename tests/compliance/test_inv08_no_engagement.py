@@ -10,7 +10,7 @@ import pytest
 from clipforge.compliance import ComplianceError, assert_no_engagement_fields
 from clipforge.config import AppConfig
 from clipforge.schemas import Platform, PublishMode, PublishRequest
-from tests.compliance._helpers import campaign, xfail_until
+from tests.compliance._helpers import campaign
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "clipforge"
 ENFORCER = SRC / "compliance.py"  # holds the forbidden-name list itself
@@ -76,7 +76,6 @@ def test_payload_normal_fields_ok() -> None:
     assert_no_engagement_fields({"user": "gaming-1", "platform[]": ["tiktok"], "title": "#ad x", "async_upload": True})
 
 
-@xfail_until("Phase 1 D: clipforge.publish.upload_post.build_payload")
 @pytest.mark.parametrize("platform", list(Platform))
 def test_upload_payload_has_no_engagement_fields(platform: Platform, app_config: AppConfig) -> None:
     from clipforge.publish.upload_post import build_payload  # type: ignore[attr-defined]

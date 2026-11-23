@@ -13,7 +13,7 @@ from clipforge.compliance import (
 )
 from clipforge.config import AppConfig
 from clipforge.schemas import Platform, PublishMode, PublishRequest
-from tests.compliance._helpers import campaign, xfail_until
+from tests.compliance._helpers import campaign
 
 
 @pytest.mark.parametrize(
@@ -62,7 +62,6 @@ def test_platform_not_in_campaign_refused() -> None:
         assert_platform_allowed(c, Platform.TIKTOK, enabled=[Platform.INSTAGRAM])
 
 
-@xfail_until("Phase 1 D: clipforge.publish.upload_post.build_payload")
 def test_upload_payload_x_caption_has_no_urls(app_config: AppConfig) -> None:
     from clipforge.publish.upload_post import build_payload  # type: ignore[attr-defined]
 
