@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 
-import yaml
+import yaml  # type: ignore[import-untyped]  # no types-PyYAML in the lockfile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
