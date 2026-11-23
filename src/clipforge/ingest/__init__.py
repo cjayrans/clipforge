@@ -4,10 +4,12 @@ Owner: Phase 1 worktree A (`feat/ingest-transcribe`). See docs/ARCHITECTURE.md Â
 
 Entry points other code already expects (keep these names):
 - `ingest.registry.add_campaign_from_json(session, settings, path) -> CampaignRow`   (`cf campaign add --from-json`)
-- `ingest.registry.list_campaigns(session) -> list[CampaignRow]`                       (`cf campaign list`)
-- `ingest.registry.set_campaign_status(session, campaign_id, status) -> CampaignRow`  (`cf campaign drain/end`)
+- `ingest.registry.list_campaigns(session, settings=None) -> list[CampaignRow]`        (`cf campaign list`)
+- `ingest.registry.set_campaign_status(session, settings, campaign_id, status) -> CampaignRow`
+  (`cf campaign drain/end`; also expires the campaign's unpublished clips)
 - `ingest.registry.check_campaign(session, settings, campaign_id) -> list[schemas.QACheck]` (`cf campaign check`)
 - `ingest.registry.add_source(session, settings, campaign_id, url) -> list[SourceRow]`  (`cf source add`)
+- `ingest.registry.retry_source(session, settings, source_id) -> SourceRow`             (`cf source retry`)
 - `ingest.download.download_source(session, settings, source: SourceRow) -> SourceRow`
   (must call `compliance.assert_registered_source`; see tests/compliance/test_inv01_sources.py)
 """

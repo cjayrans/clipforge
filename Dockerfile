@@ -23,6 +23,9 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-ins
 COPY src ./src
 COPY alembic.ini ./
 COPY scripts ./scripts
+# Runtime data the package loads from <cwd> (WORKDIR /app): caption fonts + face model (render) and prompts (rank).
+COPY assets ./assets
+COPY prompts ./prompts
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-editable
 
 ENV PATH=/opt/venv/bin:$PATH \
@@ -34,7 +37,12 @@ ENV PATH=/opt/venv/bin:$PATH \
 RUN python -c "import cv2, scenedetect, av, faster_whisper, mediapipe; from mediapipe.tasks.python import vision; \
 from zoneinfo import ZoneInfo; ZoneInfo('America/New_York'); print('imports ok, cv2', cv2.__version__)" \
     && ffmpeg -hide_banner -filters | grep -q ' ass ' \
-    && ffmpeg -hide_banner -encoders | grep -q libx264
+    && ffmpeg -hide_banner -encoders | grep -q libx264 \
+    && python -c "from clipforge.render.assets import missing_fonts, face_model_path; \
+assert not missing_fonts(['Montserrat-ExtraBold', 'Inter-Bold', 'Inter-Black']), 'fonts missing'; \
+assert face_model_path().is_file(), 'face model missing'; \
+from clipforge.rank.prompts import load_prompt; load_prompt('score_windows'); load_prompt('clip_copy'); \
+print('assets and prompts ok')"
 
 RUN useradd --create-home --uid 1000 clipforge \
     && mkdir -p /app/data /app/inbox /app/config \

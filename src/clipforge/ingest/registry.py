@@ -30,8 +30,8 @@ from clipforge.config import Settings
 from clipforge.db import CampaignRow, SourceRow, record_event
 from clipforge.ingest import alerts
 from clipforge.ingest.folders import FolderListError, list_gdrive_folder
-from clipforge.ingest.models import campaign_from_row, campaign_row_values
-from clipforge.schemas import CampaignIn, CampaignStatus, Platform, QACheck, SourceHost, slugify
+from clipforge.ingest.models import campaign_from_row, campaign_row_values, set_source_status
+from clipforge.schemas import CampaignIn, CampaignStatus, Platform, QACheck, SourceHost, SourceStatus, slugify
 
 log = logging.getLogger(__name__)
 console = Console(highlight=False)
@@ -144,7 +144,9 @@ def set_campaign_status(
 ) -> CampaignRow:
     """`cf campaign drain` / `cf campaign end`. Writes an events row.
 
-    Expiring this campaign's unpublished clips is left to Phase 2 (see docs/contract-requests/ingest-transcribe.md).
+    Draining or ending a campaign also expires its unpublished candidates and clips (ARCHITECTURE §2, CR-A5;
+    `publish.dispatcher.expire_campaign_clips`). Expiry is permanent: re-activating a drained campaign does not bring
+    them back.
     """
     status = CampaignStatus(status)
     row = get_campaign(session, campaign_id)
@@ -158,6 +160,12 @@ def set_campaign_status(
     session.flush()
     record_event(session, "campaign", row.id, old.value, status.value, actor="operator", detail=f"cf campaign {status}")
     console.print(f"campaign {row.id} ({row.name}): {old.value} -> {status.value}")
+    if status in (CampaignStatus.DRAINED, CampaignStatus.ENDED):
+        from clipforge.publish.dispatcher import expire_campaign_clips  # lazy: publish imports the HTTP client
+
+        expired = expire_campaign_clips(session, row.id, f"campaign {status.value}", actor="operator")
+        if expired:
+            console.print(f"expired {expired} unpublished candidate(s)/clip(s) of campaign {row.id}")
     return row
 
 
@@ -381,3 +389,30 @@ def _add_gdrive_folder(
     if not rows:
         console.print(f"[yellow]no media files found in {folder_url}[/yellow]")
     return rows
+
+
+def retry_source(session: Session, settings: Settings | None, source_id: int) -> SourceRow:
+    """`cf source retry <id>`: put a FAILED source back to REGISTERED so the next nightly run downloads it again
+    (CR-A5), e.g. after the operator fixed a link. Writes an events row.
+
+    Nothing is downloaded here, and the downloader re-checks invariant 1 every time, so a refused host fails again.
+    A retried `no_speech` source is downloaded and transcribed again, which costs API money.
+    """
+    source = session.get(SourceRow, source_id)
+    if source is None:
+        raise RegistryError(f"no source with id {source_id}")
+    if source.status is not SourceStatus.FAILED:
+        raise RegistryError(f"source {source.id} is {source.status.value}; only failed sources can be retried")
+    campaign = get_campaign(session, source.campaign_id)
+    if campaign.status is not CampaignStatus.ACTIVE:
+        raise RegistryError(f"campaign {campaign.id} is {campaign.status.value}; activate it before retrying sources")
+    reason = source.fail_reason or "unknown"
+    set_source_status(session, source, SourceStatus.REGISTERED, actor="operator", detail=f"retry after {reason}")
+    console.print(f"source {source.id}: failed ({reason}) -> registered; the next nightly run downloads it again")
+    if reason == "host_refused":
+        console.print(
+            "[yellow]this host was refused (COMPLIANCE #1); it will be refused again unless the link changed[/yellow]"
+        )
+    elif reason == "no_speech":
+        console.print("[yellow]a no-speech source will be transcribed again (paid) and will likely fail again[/yellow]")
+    return source

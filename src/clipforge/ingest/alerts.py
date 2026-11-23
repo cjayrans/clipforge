@@ -1,21 +1,18 @@
 """Operator alerts raised by ingest and transcribe.
 
 An alert is an `events` row with `entity="alert"`, `to_state=<kind>` and a human-readable `detail`, plus a WARNING log
-line. Delivery to Telegram belongs to the bot (Phase 1 D / Phase 2); see docs/contract-requests/ingest-transcribe.md.
+line. `alert_operator` delegates to `review.alerts.raise_alert` (one implementation); the bot delivers every alert row
+to Telegram (`review.deliver.deliver_pending_alerts`, cursor `flags.alerts_cursor`), which closes CR-A1.
 """
 
 from __future__ import annotations
 
-import logging
-import re
-
 from sqlalchemy.orm import Session
 
-from clipforge.db import EventRow, record_event
+from clipforge.db import EventRow
+from clipforge.review.alerts import ALERT_ENTITY, raise_alert, redact_urls
 
-log = logging.getLogger(__name__)
-
-ALERT_ENTITY = "alert"
+__all__ = ["ALERT_ENTITY", "alert_operator", "redact_urls"]
 
 # Alert kinds used by this branch.
 HOST_REFUSED = "host_refused"
@@ -29,18 +26,6 @@ TRANSCRIBE_FAILED = "transcribe_failed"
 TRANSCRIBE_FALLBACK = "transcribe_fallback"
 
 
-_URL_QUERY_RE = re.compile(r"(\b[a-z][a-z0-9+.-]*://[^\s?#]+)\?[^\s#]*", re.IGNORECASE)
-
-
-def redact_urls(text: str) -> str:
-    """Drop query strings from URLs in `text` (signed links, Dropbox `rlkey`), keeping scheme, host and path."""
-    return _URL_QUERY_RE.sub(r"\1?…", text)
-
-
 def alert_operator(session: Session, kind: str, entity_id: int | str, message: str) -> EventRow:
     """Record an alert for the operator. Query strings of URLs in `message` are removed (they can carry tokens)."""
-    message = redact_urls(message)
-    log.warning("operator alert [%s] %s: %s", kind, entity_id, message)
-    ev = record_event(session, ALERT_ENTITY, entity_id, None, kind, actor="system", detail=message)
-    session.flush()
-    return ev
+    return raise_alert(session, kind, entity_id, message)

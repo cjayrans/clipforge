@@ -38,7 +38,16 @@ from clipforge.compliance import (
     assert_unique_post,
 )
 from clipforge.config import AccountSet, Settings
-from clipforge.db import ClipRow, EveningRow, PostRow, SubmissionRow, record_event, transition
+from clipforge.db import (
+    CandidateRow,
+    ClipRow,
+    EveningRow,
+    PostRow,
+    SourceRow,
+    SubmissionRow,
+    record_event,
+    transition,
+)
 from clipforge.publish.queries import Lineage, approvals_for, campaign_model, caption_for, lineage
 from clipforge.publish.slots import (
     QueuedClip,
@@ -157,6 +166,67 @@ def _release(session: Session, evening: EveningRow | None, clip: ClipRow, detail
         _store_slots(
             evening, [Slot(at=s.at, clip_id=None if s.clip_id == clip.id else s.clip_id) for s in _slots(evening)]
         )
+
+
+def _evenings_holding(session: Session, clip_id: int) -> list[EveningRow]:
+    rows = session.scalars(select(EveningRow).where(EveningRow.skipped.is_(False))).all()
+    return [r for r in rows if any(s.clip_id == clip_id for s in _slots(r))]
+
+
+def release_clip(session: Session, clip: ClipRow, detail: str, *, actor: str = "system") -> None:
+    """Public form of `_release` for callers outside the evening loop (a re-render of a SCHEDULED clip, Phase 2):
+    SCHEDULED -> APPROVED and the clip is removed from every evening slot that holds it.
+
+    Refuses a clip that already has a post row (its publishing has started; it can no longer be pulled back)."""
+    if _has_posts(session, clip.id):
+        raise ValueError(f"clip {clip.id} already has posts; it can no longer be released")
+    if clip.state is ClipState.SCHEDULED:
+        transition(
+            session, clip, ClipState.APPROVED, actor="operator" if actor == "operator" else "system", detail=detail
+        )
+    for evening in _evenings_holding(session, clip.id):
+        _release(session, evening, clip, detail)
+    session.flush()
+
+
+# Clip states that expire when their campaign is drained or ended (ARCHITECTURE §2). RENDERED is transient (QA runs
+# right after render) and is caught by the next nightly sweep once it has moved on.
+EXPIRABLE_CLIP_STATES = frozenset({ClipState.PENDING_REVIEW, ClipState.APPROVED, ClipState.SCHEDULED})
+
+
+def expire_campaign_clips(session: Session, campaign_id: int, reason: str, *, actor: str = "system") -> int:
+    """Expire every unpublished candidate and clip of a drained/ended campaign (CR-A5). Returns how many changed.
+
+    CANDIDATE candidates and PENDING_REVIEW / APPROVED clips -> EXPIRED. A SCHEDULED clip is expired and removed from
+    its slot only if no post exists for it yet (a clip already publishing is left for the dispatcher to finish; the
+    dispatcher refuses inactive campaigns before any new post anyway). Every change writes an events row."""
+    who = "operator" if actor == "operator" else "system"
+    changed = 0
+    source_ids = select(SourceRow.id).where(SourceRow.campaign_id == campaign_id)
+    for cand in session.scalars(
+        select(CandidateRow).where(CandidateRow.source_id.in_(source_ids), CandidateRow.state == ClipState.CANDIDATE)
+    ):
+        transition(session, cand, ClipState.EXPIRED, actor=who, detail=reason)
+        changed += 1
+    candidate_ids = select(CandidateRow.id).where(CandidateRow.source_id.in_(source_ids))
+    clips = session.scalars(
+        select(ClipRow)
+        .where(ClipRow.candidate_id.in_(candidate_ids), ClipRow.state.in_(EXPIRABLE_CLIP_STATES))
+        .order_by(ClipRow.id)
+    ).all()
+    for clip in clips:
+        if clip.state is ClipState.SCHEDULED:
+            if _has_posts(session, clip.id):
+                continue
+            for evening in _evenings_holding(session, clip.id):
+                _store_slots(
+                    evening,
+                    [Slot(at=s.at, clip_id=None if s.clip_id == clip.id else s.clip_id) for s in _slots(evening)],
+                )
+        transition(session, clip, ClipState.EXPIRED, actor=who, detail=reason)
+        changed += 1
+    session.flush()
+    return changed
 
 
 def skip_evening(
@@ -327,6 +397,7 @@ def _dispatch_slot(
         return []
 
     results: list[PublishResult] = []
+    refused: set[Platform] = set()  # invariant 7 refusals are permanent: never retried on a later evening
     for platform in platforms:
         post = session.scalar(select(PostRow).where(PostRow.clip_id == clip.id, PostRow.platform == platform))
         if post is None:
@@ -338,6 +409,7 @@ def _dispatch_slot(
                 assert_unique_post(clip.id, clip.sha256, platform, existing)  # invariant 7
             except ComplianceError as exc:
                 alerts.raise_alert(session, alerts.GATE_REFUSED, clip.id, str(exc))
+                refused.add(platform)
                 continue
             post = PostRow(clip_id=clip.id, clip_sha256=clip.sha256, platform=platform, slot_at=slot.at, created_at=now)
             session.add(post)
@@ -352,8 +424,15 @@ def _dispatch_slot(
             results.append(result)
 
     posted = {p.platform for p in session.scalars(select(PostRow).where(PostRow.clip_id == clip.id))}
-    if posted >= set(platforms) and clip.state is ClipState.SCHEDULED:
-        transition(session, clip, ClipState.PUBLISHED, detail=f"{len(posted)} post(s)")
+    if clip.state is ClipState.SCHEDULED:
+        if not posted and refused >= set(platforms):
+            # Every platform already has this clip or file (invariant 7): it can never publish, so stop re-queueing it.
+            transition(session, clip, ClipState.EXPIRED, detail="already posted on every eligible platform")
+            alerts.raise_alert(
+                session, alerts.CLIP_EXPIRED, clip.id, f"clip {clip.id} expired: already posted on every platform"
+            )
+        elif posted and posted >= set(platforms) - refused:
+            transition(session, clip, ClipState.PUBLISHED, detail=f"{len(posted)} post(s)")
     session.commit()
     return results
 
