@@ -62,17 +62,21 @@ transitions.
 Coverage on this branch: `ass`, `overlays`, `reframe`, `shots`, `qa/checks`, `qa/preview` at 100%; `captions` 98%;
 `encode` 91%; `render/` + `qa/` 88% overall.
 
-**Skipped on the Mac, run in CI and Docker (not yet run anywhere):** this Mac has no ffmpeg, Homebrew or Docker,
-and mediapipe is Linux-only. These tests run for the first time in CI on this push:
-- `test_real_render_of_fixture[game|talk]`: a real 12 s render with libass and the bundled fonts, checked with ffprobe.
-- `test_ad_label_pixels_visible_then_gone`: compares the clip with a baseline encode of the same window that has no
-  ASS file. The label box must differ at 0.5 s and 2.5 s and match at 4 s. The thresholds (> 15 and < 4 mean grey
-  levels) are first guesses. If CI fails here, tune the thresholds or the box and keep the invariant as it is.
+**Locally vs CI.** This Mac has no ffmpeg, Homebrew or Docker, and mediapipe is Linux-only, so 8 tests skip
+here (`make lint test`: 370 passed, 8 skipped, 19 xfailed). They run in CI (ffmpeg and MediaPipe installed). CI run
+`45093634644` on `a053672` (verbose log): **378 passed, 19 xfailed, 0 skipped**. These all PASSED there:
+- `test_real_render_of_fixture[game]` and `[talk]`: a real 12 s render with libass and the bundled fonts, checked with
+  ffprobe.
+- `test_ad_label_pixels_visible_then_gone`: compares the clip with a baseline encode of the same window that has no ASS
+  file. The label box must differ at 0.5 s and 2.5 s (mean grey diff > 15) and match at 4 s (< 4). The thresholds were
+  first guesses and passed unchanged. The test prints the measured diffs, so the margin shows in the CI log.
 - `test_real_proxy_from_fixture`, `test_probe_fixture`, `test_bench_smoke`.
 - `test_faceless_fixture_defaults_to_fit_blur`: real MediaPipe on the face-less fixture.
 
-Check the first CI run of this branch before merging. The filtergraph strings are unit-tested but have not been
-run through a real ffmpeg yet.
+**Proxy size, measured on CI.** The 90 s fixture is 5,095,410 bytes. Its 480p proxy at `crf 28` (the encoder setting)
+is 1,577,493 bytes; at crf 23 it is 1,884,384 and at crf 32 it is 1,465,827. So the proxy is about 3.2× smaller and
+the settings stay as they are. `test_real_proxy_from_fixture` uses a 3,000,000-byte limit, which forces a proxy and
+requires it to fit. An earlier 1,000-byte limit in that test was impossible for any 90 s clip.
 
 **Shared test files touched:**
 - `tests/compliance/test_inv03_ad_label.py`: the strict-xfail marker on
@@ -132,7 +136,7 @@ See `docs/contract-requests/render.md`:
 
 ## Compliance review
 
-I ran the `compliance-reviewer` subagent twice on `git diff main...HEAD`.
+I ran the `compliance-reviewer` subagent three times on the branch diff.
 
 **First run: FAIL, 4 required fixes, all applied in `3f0200e`.**
 1. `has_ad_label` was a substring test on the ASS text. It could be true with a blank label (`ad_label_text: "   "`
@@ -145,16 +149,24 @@ I ran the `compliance-reviewer` subagent twice on `git diff main...HEAD`.
 
 It also recommended hardening the audio-map check, which is done.
 
-**Second run: all four fixes confirmed, 9 invariants untouched, none weakened.**
-- 2 and 9 (QA side) and 10 are stronger. 3 is preserved.
-- The verdict stays FAIL until CI runs, because the pixel proof for invariant 3 has never executed (no ffmpeg on the
-  Mac). **Merge condition:** the CI run of this branch must show `test_ad_label_pixels_visible_then_gone` and
-  `test_real_render_of_fixture[game]` / `[talk]` **passed, not skipped**.
-- After that review I made the pixel test sturdier (baseline comparison in place of a bright-pixel count) and kept
-  file paths out of the audio check.
+**Second run: all four fixes confirmed, none weakened.** The verdict stayed FAIL only until CI had run the pixel
+test. After that review I made the pixel test sturdier (baseline comparison in place of a bright-pixel count) and
+kept file paths out of the audio check.
 
-**This branch tightens invariants 2, 3 and 10 and weakens none.** `compliance.py`, `schemas.py` and `config.py` are
-unchanged.
+**Third run (after CI): PASS, no fixes required.**
+- CI run `45093634644`, verbose log: `test_ad_label_pixels_visible_then_gone`, `test_real_render_of_fixture[game]` and
+  `[talk]` **PASSED, not skipped**. Totals 378 passed, 19 xfailed, 0 skipped.
+- The three un-xfailed compliance tests (`test_overlay_ad_label_spans_first_three_seconds`,
+  `test_encoder_maps_only_source_audio`, `test_qa_rejects_out_of_bounds_duration`) PASSED in CI.
+- The 19 remaining xfails all belong to Phase 1 A and D and Phase 2.
+- `tests/compliance` differs from `main` only by those 3 removed markers and 2 import edits.
+- No new HTTP or engagement code. No changes to `compliance.py`, `schemas.py`, `config.py` or any other section's
+  folders. The merge of `origin/main` brought in only PR #3's CI and Dockerfile apt change.
+- Invariants 2, 3, 9 and 10 are preserved and stronger on the QA/render side; the other eight are untouched.
+- The reviewer judged the pixel test a sound proof for invariant 3. It samples 0.5 s and 2.5 s, not frame 0 or
+  2.99 s; the exact 0.0 and 3.0 boundaries rest on the manifest check and the ASS timing unit test.
+
+**This branch tightens invariants 2, 3 and 10 and weakens none.**
 
 Non-blocking notes for Phase 2:
 - `qa.checks.has_tag` copies the tag regex from `compliance._has_tag`. Expose one public `compliance.has_tag`.

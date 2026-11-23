@@ -222,7 +222,9 @@ def _mean_abs_diff(a: bytes, b: bytes) -> float:
 
 
 @needs_ffmpeg
-def test_ad_label_pixels_visible_then_gone(tmp_path: Path, app_config: AppConfig) -> None:
+def test_ad_label_pixels_visible_then_gone(
+    tmp_path: Path, app_config: AppConfig, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Invariant 3 on real pixels. Compare the rendered clip with a baseline encode of the same window and crop but
     no ASS: the label box differs strongly at 0.5 s and 2.5 s (label on) and barely at 4 s (label off)."""
     from clipforge.render.encode import EncodeSettings, build_ffmpeg_args, default_plan, run_ffmpeg
@@ -244,6 +246,8 @@ def test_ad_label_pixels_visible_then_gone(tmp_path: Path, app_config: AppConfig
     diffs = {
         t: _mean_abs_diff(_gray_region(m.clip_path, t, *box), _gray_region(baseline, t, *box)) for t in (0.5, 2.5, 4.0)
     }
+    with capsys.disabled():  # shown in the CI log so the margin against the thresholds is visible
+        print(f"\nAD-LABEL mean grey diff vs no-ass baseline (label box): {diffs}")
     assert diffs[0.5] > 15, diffs
     assert diffs[2.5] > 15, diffs
     assert diffs[4.0] < 4, diffs
