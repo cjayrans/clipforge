@@ -8,5 +8,6 @@ Entry points:
   copy, score stats, failures). Persists nothing but cost rows.
 - `rank.copy.write_copy(candidate, clip_text, campaign, platforms, client=...)` → `schemas.ClipCopy` (bot "New hook").
 - `rank.windows.build_windows`, `rank.select.select_candidates`: pure.
-- `rank.claude_client.ClaudeClient.from_settings(settings, session)`: the one Anthropic client.
+- `rank.claude_client.ClaudeClient.from_settings(settings, ledger=sessionmaker)`: the one Anthropic client; it
+  commits each cost row in its own transaction (COMPLIANCE #12).
 """

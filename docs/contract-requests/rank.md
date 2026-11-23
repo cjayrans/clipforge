@@ -68,7 +68,20 @@ These are module constants today; config would let them be tuned without a code 
 | non-standalone penalty | `rank.select.NOT_STANDALONE_PENALTY` | 15 points |
 | overlap de-dup threshold | `rank.select.MAX_OVERLAP` | 0.5 |
 
-## 7. Cost ledger: Haiku long-prompt tier (informational)
+## 7. Cost rows commit on their own (Phase 2: pass a session factory)
+
+The compliance review found that cost rows were only flushed into the caller's transaction, so a rollback after
+an early stop (spend cap, API error, Ctrl-C) erased spend that really happened, and the next run could spend again
+(invariant 12). Fixed: `ClaudeClient(..., ledger=sessionmaker)` runs each `costs.guard()` check and each pair of
+`costs.record()` rows in its own short transaction and commits at once. For Phase 2:
+
+- build the client with `ClaudeClient.from_settings(settings, make_session_factory(engine))`;
+- don't call `rank_source` / `write_copy` while holding an uncommitted write on the same SQLite file (the ledger
+  commit would wait for that lock, then fail after the 15 s busy timeout). Commit pipeline writes before ranking
+  and persist candidates afterwards;
+- `costs.record` itself still only flushes. Other paid clients (Groq in transcribe) may want the same pattern.
+
+## 8. Cost ledger: Haiku long-prompt tier (informational)
 
 Claude Haiku 5.5 costs $0.50/$2.50 per MTok for prompts over 100K tokens (https://platform.claude.com/docs/en/models/haiku-5-5/overview);
 `config.prices` has only the ≤100K rate. Scoring prompts are about 3–5K tokens (10 windows), so the flat price is

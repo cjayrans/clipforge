@@ -32,13 +32,12 @@ from typing import Any
 import httpx2
 from rich.console import Console
 from rich.table import Table
-from sqlalchemy.orm import Session
 
 from clipforge import costs
 from clipforge.config import ConfigError, Settings, load_settings
 from clipforge.db import Base, make_engine, make_session_factory, session_scope
 from clipforge.rank.claude_client import ClaudeClient
-from clipforge.rank.prompts import load_fewshots, load_prompt
+from clipforge.rank.prompts import Fewshot, load_fewshots, load_prompt
 from clipforge.rank.score import TOOL_NAME, score_windows
 from clipforge.rank.select import select_candidates
 from clipforge.rank.windows import build_windows
@@ -181,7 +180,7 @@ class TranscriptReport:
 
 
 def _run_once(
-    transcript: Transcript, campaign: CampaignIn, client: ClaudeClient, k: int, fewshots: list[Any]
+    transcript: Transcript, campaign: CampaignIn, client: ClaudeClient, k: int, fewshots: Sequence[Fewshot]
 ) -> tuple[Any, list[Any], int]:
     cfg = client.app.pipeline
     windows = build_windows(
@@ -206,12 +205,11 @@ def evaluate(
     campaign: CampaignIn,
     labels: Sequence[Label],
     client: ClaudeClient,
-    session: Session,
+    fewshots: Sequence[Fewshot] = (),
     k: int,
     repeat: int,
     iou_threshold: float,
 ) -> list[TranscriptReport]:
-    fewshots = load_fewshots(session)
     reports = []
     for path in transcripts:
         transcript = Transcript.model_validate(json.loads(path.read_text(encoding="utf-8")))
@@ -317,19 +315,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         http_client = httpx2.Client(transport=httpx2.MockTransport(Replay(args.replay_dir).handler))
         key = None
 
+    factory = make_session_factory(engine)
     try:
-        with session_scope(make_session_factory(engine)) as session:
-            client = ClaudeClient(key or REPLAY_KEY, session=session, app=settings.app, http_client=http_client)
-            reports = evaluate(
-                transcripts=args.transcripts,
-                campaign=campaign,
-                labels=labels,
-                client=client,
-                session=session,
-                k=args.k,
-                repeat=args.repeat if args.live else 1,
-                iou_threshold=args.iou,
-            )
+        # The client commits each cost row in its own transaction, so spend survives an early stop (COMPLIANCE #12).
+        client = ClaudeClient(key or REPLAY_KEY, ledger=factory, app=settings.app, http_client=http_client)
+        with session_scope(factory) as session:  # read-only: few-shot examples
+            fewshots = load_fewshots(session)
+        reports = evaluate(
+            transcripts=args.transcripts,
+            campaign=campaign,
+            labels=labels,
+            client=client,
+            fewshots=fewshots,
+            k=args.k,
+            repeat=args.repeat if args.live else 1,
+            iou_threshold=args.iou,
+        )
+        with session_scope(factory) as session:
             spent = costs.month_to_date(session, settings.app) if args.live else 0.0
     except costs.SpendCapReached as exc:
         console.print(f"[red]stopped: {exc}[/red]")

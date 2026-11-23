@@ -115,6 +115,7 @@ def test_client_errors_are_not_retried(client, fake):
 
 def test_spend_cap_blocks_before_any_request(client, fake, session):
     costs.pause(session, "test cap")
+    session.commit()
     with pytest.raises(costs.SpendCapReached):
         call_tool(client)
     assert fake.requests == []
@@ -122,6 +123,7 @@ def test_spend_cap_blocks_before_any_request(client, fake, session):
 
 def test_month_to_date_over_cap_blocks(client, fake, session, app_config):
     costs.record(session, app_config, "anthropic", "claude-sonnet-5-5", 10_000_000, "output_tokens")  # $100
+    session.commit()
     with pytest.raises(costs.SpendCapReached):
         call_json(client)
     assert fake.requests == []
@@ -165,14 +167,24 @@ def test_empty_text_raises(client, fake):
 
 
 @pytest.mark.parametrize("key", [None, ""])
-def test_missing_key_is_a_clear_error(session, app_config, key):
+def test_missing_key_is_a_clear_error(ledger, app_config, key):
     with pytest.raises(RankError, match="ANTHROPIC_API_KEY is not set"):
-        ClaudeClient(key, session=session, app=app_config)
+        ClaudeClient(key, ledger=ledger, app=app_config)
 
 
-def test_from_settings_uses_secret(settings, session, monkeypatch):
+def test_from_settings_uses_secret(settings, ledger):
     with pytest.raises(RankError, match="not set"):
-        ClaudeClient.from_settings(settings, session)
+        ClaudeClient.from_settings(settings, ledger)
+
+
+def test_cost_rows_survive_caller_rollback(client, fake, session, ledger):
+    """COMPLIANCE #12: spend is committed at once, so a caller's rollback can't erase it."""
+    fake.add(tool_use("t", {"x": 1}, input_tokens=0, output_tokens=2_000_000))
+    call_tool(client)
+    session.rollback()  # e.g. the pipeline's own transaction fails after ranking
+    with ledger() as fresh:
+        assert len(fresh.scalars(select(CostRow)).all()) == 2
+        assert costs.month_to_date(fresh, client.app) == pytest.approx(1.0)
 
 
 def test_schema_helpers():

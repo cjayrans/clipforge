@@ -26,11 +26,12 @@ from typing import Any, Literal
 import anthropic
 import httpx2
 from pydantic import SecretStr
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from clipforge import costs
 from clipforge.config import AppConfig, Settings
+from clipforge.db import session_scope
 
 log = logging.getLogger(__name__)
 
@@ -71,30 +72,35 @@ class ClaudeClient:
         self,
         api_key: SecretStr | str | None,
         *,
-        session: Session,
+        ledger: sessionmaker[Session],
         app: AppConfig,
         http_client: httpx2.Client | None = None,
         timeout_s: float = DEFAULT_TIMEOUT_S,
         max_attempts: int = MAX_ATTEMPTS,
         backoff_s: float = 1.0,
     ) -> None:
+        """`ledger` makes the sessions for the spend-cap guard and cost rows. Each guard check and each cost record
+        runs in its own short transaction and commits at once, so a caller's later rollback (or a crash) can never
+        erase spend that already happened (COMPLIANCE #12). Don't call the client while holding an uncommitted
+        write on the same SQLite file: the ledger commit would wait for that lock."""
         key = api_key.get_secret_value() if isinstance(api_key, SecretStr) else api_key
         if not key:
             raise RankError("ANTHROPIC_API_KEY is not set; ranking needs it")
-        self.session = session
+        self.ledger = ledger
         self.app = app
         self.max_attempts = max_attempts
         self.backoff_s = backoff_s
         self._sdk = anthropic.Anthropic(api_key=key, max_retries=0, timeout=timeout_s, http_client=http_client)
 
     @classmethod
-    def from_settings(cls, settings: Settings, session: Session, **kwargs: Any) -> ClaudeClient:
-        return cls(settings.secrets.anthropic_api_key, session=session, app=settings.app, **kwargs)
+    def from_settings(cls, settings: Settings, ledger: sessionmaker[Session], **kwargs: Any) -> ClaudeClient:
+        return cls(settings.secrets.anthropic_api_key, ledger=ledger, app=settings.app, **kwargs)
 
     # ----------------------------------------------------------------------------------------------
 
     def _create(self, **params: Any) -> tuple[anthropic.types.Message, int]:
-        costs.guard(self.session, self.app)  # raises SpendCapReached before spending anything
+        with session_scope(self.ledger) as s:
+            costs.guard(s, self.app)  # raises SpendCapReached before spending anything
         attempts = 0
         for attempt in Retrying(
             retry=retry_if_exception_type(RETRYABLE),
@@ -113,9 +119,11 @@ class ClaudeClient:
     def _record(self, model: str, message: anthropic.types.Message) -> None:
         # Priced by the model we asked for (config.prices is keyed by it). Thinking tokens are billed as output and
         # are included in output_tokens. Prompt caching is not used, so there are no cache tokens to price.
+        # Committed immediately in a separate transaction (see __init__).
         usage = message.usage
-        costs.record(self.session, self.app, SERVICE, model, usage.input_tokens, "input_tokens")
-        costs.record(self.session, self.app, SERVICE, model, usage.output_tokens, "output_tokens")
+        with session_scope(self.ledger) as s:
+            costs.record(s, self.app, SERVICE, model, usage.input_tokens, "input_tokens")
+            costs.record(s, self.app, SERVICE, model, usage.output_tokens, "output_tokens")
 
     @staticmethod
     def _check_stop(message: anthropic.types.Message) -> None:

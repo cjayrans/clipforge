@@ -7,9 +7,13 @@ from pathlib import Path
 
 import anthropic
 import pytest
+from sqlalchemy import select
 
+from clipforge import costs
+from clipforge.db import CostRow, session_scope
+from clipforge.rank.score import TOOL_NAME
 from evals import run as ev
-from tests.rank.anthropic_mock import FakeAnthropic
+from tests.rank.anthropic_mock import FakeAnthropic, tool_use
 from tests.rank.test_score import echo_scores
 
 
@@ -83,14 +87,13 @@ def test_bad_args():
         ev.parse_args(["--k", "0"])
 
 
-def test_stability_across_repeats(client, fake: FakeAnthropic, session):
+def test_stability_across_repeats(client, fake: FakeAnthropic):
     fake.default = echo_scores
     reports = ev.evaluate(
         transcripts=[ev.DEFAULT_TRANSCRIPTS[0]],
         campaign=ev.CampaignIn.model_validate(json.loads(ev.DEFAULT_CAMPAIGN.read_text())),
         labels=ev.load_labels(ev.DEFAULT_LABELS),
         client=client,
-        session=session,
         k=3,
         repeat=2,
         iou_threshold=0.5,
@@ -130,3 +133,35 @@ def test_load_labels(tmp_path):
     bad.write_text("transcript,start_s,end_s,label,note\nt,0,30,meh,\n")
     with pytest.raises(ValueError, match="good or bad"):
         ev.load_labels(bad)
+
+
+def test_cap_stop_keeps_spend_and_blocks_next_run(client, fake: FakeAnthropic, ledger, app_config):
+    """COMPLIANCE #12 regression: a run stopped by the cap keeps its cost rows; the next run sends nothing."""
+
+    def expensive(body):  # $1.00 per call at the example config's Haiku output price
+        scores = json.loads(echo_scores(body).content)["content"][0]["input"]
+        return tool_use(TOOL_NAME, scores, input_tokens=0, output_tokens=2_000_000)
+
+    fake.default = expensive
+    args = {
+        "transcripts": [ev.DEFAULT_TRANSCRIPTS[0]],
+        "campaign": ev.CampaignIn.model_validate(json.loads(ev.DEFAULT_CAMPAIGN.read_text())),
+        "labels": [],
+        "client": client,
+        "k": 3,
+        "repeat": 50,
+        "iou_threshold": 0.5,
+    }
+    # The caller's own transaction rolls back when the cap stops the run.
+    with pytest.raises(costs.SpendCapReached), session_scope(ledger):
+        ev.evaluate(**args)
+    sent = len(fake.requests)
+    assert sent == int(app_config.monthly_api_cap_usd)  # $15 cap, $1 per call
+
+    with ledger() as fresh:
+        assert len(fresh.scalars(select(CostRow)).all()) == 2 * sent
+        assert costs.month_to_date(fresh, app_config) >= app_config.monthly_api_cap_usd
+
+    with pytest.raises(costs.SpendCapReached):
+        ev.evaluate(**args)
+    assert len(fake.requests) == sent  # refused before any request
