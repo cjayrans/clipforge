@@ -146,7 +146,9 @@ def test_chunk_args() -> None:
     args = audio.chunk_args("a.mp3", ChunkPlan(2, 5600.0, 11200.5), "c.mp3")
     assert args[args.index("-ss") + 1] == "5600.000"
     assert args[args.index("-t") + 1] == "5600.500"
-    assert args[-3:] == ["-c", "copy", "c.mp3"]
+    assert "copy" not in args  # re-encoded: stream copy on MP3 is not frame-accurate
+    assert args.index("-ss") < args.index("-i") < args.index("-t")  # accurate seek, output-side duration
+    assert args[-1] == "c.mp3"
 
 
 def test_cut_chunks_runner(tmp_path: Path) -> None:

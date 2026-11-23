@@ -37,7 +37,11 @@ def extract_audio_args(src: Path | str, out: Path | str) -> list[str]:
 
 
 def chunk_args(audio: Path | str, plan: ChunkPlan, out: Path | str) -> list[str]:
-    """Cut one chunk without re-encoding (MP3 frames are ~26 ms, well inside the 2 s overlap)."""
+    """Cut one chunk, re-encoded so start and length are sample-accurate.
+
+    `-c copy` on MP3 snaps to frame boundaries and the bit reservoir, and CI measured a 4.005 s cut at
+    3.778 s. Merged transcript timestamps are chunk start + local time, so the cut must be exact.
+    """
     return [
         "ffmpeg",
         "-y",
@@ -45,12 +49,17 @@ def chunk_args(audio: Path | str, plan: ChunkPlan, out: Path | str) -> list[str]
         "error",
         "-ss",
         f"{plan.start_s:.3f}",
-        "-t",
-        f"{plan.duration_s:.3f}",
         "-i",
         str(audio),
-        "-c",
-        "copy",
+        "-t",
+        f"{plan.duration_s:.3f}",
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(SAMPLE_RATE),
+        "-b:a",
+        f"{AUDIO_BITRATE_BPS // 1000}k",
         str(out),
     ]
 
