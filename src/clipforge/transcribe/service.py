@@ -8,6 +8,9 @@ provider, model and cost, and the source becomes TRANSCRIBED (events row). Tempo
 No-speech guard (PRD F17): under 20 words per minute the transcript is still stored, but the source becomes FAILED
 with `fail_reason="no_speech"` and the operator is alerted. Rank only sources whose status is TRANSCRIBED.
 
+Fallback (PRD F3): if Groq fails twice on a chunk (each failure is already 3 retried attempts), or no Groq key is
+set, the whole source is transcribed with faster-whisper on CPU (`transcribe.local`) and an operator alert notes it.
+
 Errors: `costs.SpendCapReached` propagates untouched (the pipeline pauses). Any other failure raises
 `TranscriberError` after writing an operator alert; the source stays DOWNLOADED so the next night retries it. Commit
 the session after catching it.
@@ -18,7 +21,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from sqlalchemy.orm import Session
 
@@ -31,8 +34,11 @@ from clipforge.transcribe import audio
 from clipforge.transcribe.chunker import ChunkResult, merge_chunks, plan_chunks
 from clipforge.transcribe.groq_client import ChunkOutput, GroqTranscriber, TranscriberError
 from clipforge.transcribe.guard import NO_SPEECH_REASON, NO_SPEECH_WPM, is_no_speech, words_per_minute
+from clipforge.transcribe.local import LocalTranscriber, LocalUnavailable, local_fallback_enabled, local_model_name
 
 log = logging.getLogger(__name__)
+
+GROQ_FAILURES_BEFORE_FALLBACK = 2  # PRD F3: local fallback if Groq fails twice
 
 
 class Transcriber(Protocol):
@@ -56,18 +62,70 @@ def load_transcript(path: Path | str) -> Transcript:
     return Transcript.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 
-def _run_backend(
-    backend: Transcriber, chunks: list[tuple[ChunkResult, Path]]
-) -> tuple[list[ChunkResult], str | None, float]:
-    results: list[ChunkResult] = []
-    language: str | None = None
+def _transcribe_chunks(
+    session: Session,
+    settings: Settings,
+    source: SourceRow,
+    chunks: list[tuple[ChunkResult, Path]],
+    transcriber: Transcriber | None,
+    local: Transcriber | None,
+) -> tuple[Transcriber, list[ChunkResult], str | None, float]:
+    """Groq first; if one chunk fails `GROQ_FAILURES_BEFORE_FALLBACK` times, redo the whole source locally.
+
+    Returns (backend used, chunk results, language, API cost). Cost includes Groq chunks that succeeded before a
+    fallback (they were billed).
+    """
     cost = 0.0
-    for res, path in chunks:
-        out = backend.transcribe_chunk(path, res.plan.duration_s)
-        results.append(ChunkResult(res.plan, out.words, out.segments))
-        language = language or out.language
-        cost += out.cost_usd
-    return results, language, cost
+    last_error: TranscriberError | None = None
+    primary: Transcriber | None
+    try:
+        primary = transcriber or GroqTranscriber(session, settings)
+    except TranscriberError as exc:  # e.g. GROQ_API_KEY not set
+        primary, last_error = None, exc
+
+    if primary is not None:
+        results: list[ChunkResult] = []
+        language: str | None = None
+        for res, path in chunks:
+            for failure in range(1, GROQ_FAILURES_BEFORE_FALLBACK + 1):
+                try:
+                    out = primary.transcribe_chunk(path, res.plan.duration_s)
+                    break
+                except TranscriberError as exc:
+                    last_error = exc
+                    log.warning(
+                        "source %s chunk %s: %s failure %d: %s",
+                        source.id,
+                        res.plan.index,
+                        primary.provider,
+                        failure,
+                        exc,
+                    )
+            else:
+                break  # this chunk failed twice: fall back
+            results.append(ChunkResult(res.plan, out.words, out.segments))
+            language = language or out.language
+            cost += out.cost_usd
+        else:
+            return primary, results, language, cost
+
+    assert last_error is not None
+    if local is None:
+        raise last_error
+    alerts.alert_operator(
+        session, alerts.TRANSCRIBE_FALLBACK, source.id, f"Groq failed ({last_error}); transcribing locally (slow)"
+    )
+    try:
+        local_results: list[ChunkResult] = []
+        local_language: str | None = None
+        for res, path in chunks:
+            out = local.transcribe_chunk(path, res.plan.duration_s)
+            local_results.append(ChunkResult(res.plan, out.words, out.segments))
+            local_language = local_language or out.language
+            cost += out.cost_usd
+    except LocalUnavailable as exc:
+        raise TranscriberError(f"{last_error}; local fallback unavailable: {exc}") from exc
+    return local, local_results, local_language, cost
 
 
 def transcribe_source(
@@ -76,9 +134,16 @@ def transcribe_source(
     source: SourceRow,
     *,
     transcriber: Transcriber | None = None,
+    local: Transcriber | None | Literal["auto"] = "auto",
     runner: media.Runner = media.run,
 ) -> Transcript:
-    """Transcribe a DOWNLOADED source; see the module docstring."""
+    """Transcribe a DOWNLOADED source; see the module docstring.
+
+    `transcriber` defaults to Groq. `local` is the fallback: "auto" builds a faster-whisper LocalTranscriber when
+    `local_fallback_enabled(settings)`; None disables the fallback.
+    """
+    if local == "auto":
+        local = LocalTranscriber(local_model_name(settings)) if local_fallback_enabled(settings) else None
     if source.status is not SourceStatus.DOWNLOADED:
         raise TranscriberError(f"source {source.id} is {source.status.value}, not downloaded")
     if not source.local_path or not Path(source.local_path).is_file():
@@ -92,8 +157,7 @@ def transcribe_source(
         paths = audio.cut_chunks(audio_path, plans, work / "chunks", runner)
         chunks = [(ChunkResult(p), path) for p, path in zip(plans, paths, strict=True)]
 
-        backend = transcriber or GroqTranscriber(session, settings)
-        results, language, cost = _run_backend(backend, chunks)
+        backend, results, language, cost = _transcribe_chunks(session, settings, source, chunks, transcriber, local)
     except media.MediaToolError as exc:
         alerts.alert_operator(session, alerts.TRANSCRIBE_FAILED, source.id, f"audio extraction failed: {exc}")
         raise TranscriberError(str(exc)) from exc

@@ -25,6 +25,7 @@ DOWNLOAD_FAILED = "download_failed"
 DUPLICATE_SOURCE = "duplicate_source"
 INBOX_UNKNOWN = "inbox_unknown_campaign"
 TRANSCRIBE_FAILED = "transcribe_failed"
+TRANSCRIBE_FALLBACK = "transcribe_fallback"
 
 
 def alert_operator(session: Session, kind: str, entity_id: int | str, message: str) -> EventRow:

@@ -233,7 +233,7 @@ def test_backend_failure_alerts_and_keeps_status(session: Session, settings: Set
             raise TranscriberError("Groq transcription failed: InternalServerError")
 
     with pytest.raises(TranscriberError):
-        service.transcribe_source(session, settings, src, transcriber=Broken(), runner=fake_runner(90))
+        service.transcribe_source(session, settings, src, transcriber=Broken(), runner=fake_runner(90), local=None)
     assert src.status is SourceStatus.DOWNLOADED
     alert = session.scalars(select(EventRow).where(EventRow.entity == "alert")).one()
     assert alert.to_state == "transcribe_failed"
@@ -244,5 +244,5 @@ def test_spend_cap_propagates(session: Session, keyed_settings: Settings, factor
     src = downloaded_source(factory, keyed_settings)
     costs.pause(session, "spend cap")
     with pytest.raises(costs.SpendCapReached):
-        service.transcribe_source(session, keyed_settings, src, runner=fake_runner(90))
+        service.transcribe_source(session, keyed_settings, src, runner=fake_runner(90), local=None)
     assert src.status is SourceStatus.DOWNLOADED
