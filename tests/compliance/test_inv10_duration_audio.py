@@ -31,7 +31,6 @@ def test_only_source_audio_mapped() -> None:
         assert_render_manifest(manifest(audio_source_only=False))
 
 
-@xfail_until("Phase 1 C: clipforge.render.encode.build_ffmpeg_args")
 def test_encoder_maps_only_source_audio() -> None:
     from clipforge.render.encode import build_ffmpeg_args  # type: ignore[attr-defined]
 
