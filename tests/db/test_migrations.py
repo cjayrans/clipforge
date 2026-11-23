@@ -6,6 +6,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy import text
@@ -87,3 +88,37 @@ def test_backup_of_wal_database_is_self_contained(tmp_path: Path) -> None:
         assert con.execute("SELECT x FROM t").fetchall() == [(1,)]
     finally:
         con.close()
+
+
+def test_wal_switch_retries_while_another_process_holds_the_lock() -> None:
+    """Phase 2 finding on the Docker bind mount: two processes opening a new DB at once -> 'database is locked'."""
+    from clipforge.db import session as db_session
+
+    class Cur:
+        def __init__(self, failures: int) -> None:
+            self.failures = failures
+            self.calls = 0
+
+        def execute(self, sql: str) -> None:
+            self.calls += 1
+            if self.failures:
+                self.failures -= 1
+                raise sqlite3.OperationalError("database is locked")
+
+    cur = Cur(failures=3)
+    db_session._enable_wal(cur, retry_s=5)
+    assert cur.calls == 4
+    stuck = Cur(failures=10_000)
+    db_session._enable_wal(stuck, retry_s=0.1)  # gives up quietly: the rollback journal still works
+    assert stuck.calls >= 1
+
+
+def test_wal_switch_reraises_other_errors() -> None:
+    from clipforge.db import session as db_session
+
+    class Cur:
+        def execute(self, sql: str) -> None:
+            raise sqlite3.OperationalError("disk I/O error")
+
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O"):
+        db_session._enable_wal(Cur())
