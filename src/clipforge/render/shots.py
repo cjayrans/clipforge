@@ -67,7 +67,7 @@ def detect_shots(
     min_shot_s: float = DEFAULT_MIN_SHOT_S,
 ) -> list[Shot]:
     """Shot list for [start_s, end_s] of `path` using PySceneDetect's ContentDetector."""
-    from scenedetect import ContentDetector, SceneManager, open_video
+    from scenedetect import ContentDetector, SceneManager, open_video  # type: ignore[import-untyped]
 
     video = open_video(str(path))
     fps = float(video.frame_rate)
