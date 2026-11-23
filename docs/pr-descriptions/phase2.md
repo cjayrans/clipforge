@@ -239,3 +239,59 @@ Both were invisible on CI's Ubuntu runner and the Mac, and would have broken the
   - `make down` afterwards, as agreed.
 - **Docker CLI:** Docker Desktop's CLI is not on your shell PATH (`/Applications/Docker.app/Contents/Resources/bin`).
   `make up` needs it there; Docker Desktop's "install CLI tools" setting or a PATH line fixes it.
+
+## Compliance review (`compliance-reviewer` subagent, whole repo)
+
+**First pass: FAIL on invariant 12** (two items). Every other invariant was preserved or strengthened. It found no
+path that publishes or approves a clip without a fresh operator tap. It also ran three throwaway probes outside the
+repo:
+- a paused New hook spends nothing;
+- stranded recovery makes the old approval stale;
+- clock skew can't revive an approval.
+
+Required fixes, both done in `2b9b7fd`:
+1. **Groq cost recorded before parsing.** A billed 200 whose body failed to parse was never recorded, so a retry
+   could spend past the cap. Groq now records first, and parse errors become `TranscriberError`. Test:
+   `test_billed_response_that_fails_to_parse_is_still_recorded`.
+2. **Paused New hook tested.** New compliance test `test_new_hook_spends_nothing_while_paused`: no Anthropic request,
+   no cost row, the clip back in review, the old approval stale.
+
+Hardening it recommended:
+
+| Recommendation | Outcome |
+| --- | --- |
+| Refuse re-rendering any clip that has a post row | Done; tested |
+| Take `now` inside the swap transaction | Done |
+| Redact two pipeline alert texts | Done |
+| Commit the local-fallback alert before the long CPU transcription | Done |
+| URL query strings in `log.exception` tracebacks | **Not done.** Logs only, never alerts; see "Still weak" |
+
+**Second pass (on `2b9b7fd`): PASS.**
+- `tests/compliance`: 155 passed. Full suite: 1058 passed, 11 skipped.
+- Invariants 1, 3, 5, 7 and 12 strengthened; 2, 9 and 10 preserved; 4, 6, 8 and 11 untouched.
+- The extra rules hold: no live mode in tests, owner-only bot, no secrets in alerts, no scraping, no
+  `first_comment`.
+
+## Still weak (known, not blocking)
+
+- **Shorter edits the shared candidate.** Shorter changes the candidate row's range. v1 makes one clip per candidate,
+  so nothing else uses it, but a second account set would share the shorter range.
+- **New hook may repeat itself.** It can return the same hook: the copy prompt has no "avoid this hook" input, and
+  changing it means a new prompt version.
+- **A spend-cap stop mid-rank loses that source's output.** `rank_source` returns only at the end, so copy already
+  paid for in that source is lost (the cost rows are kept).
+- **No per-second energy input** for window pre-scoring (rank CR 5, deferred).
+- **Old render folders pile up.** Superseded `r<stamp>` folders are deleted only after a successful re-render. No job
+  enforces `retention.clip_days` on clip files yet.
+- **A bot crash mid-re-render blocks that clip until the night.** The clip stays RENDERED until the nightly sweep
+  (after 1 h) returns it to review.
+- **Signed URLs can reach logs.** `log.exception` tracebacks can contain URL query strings (logs only; alerts drop
+  them).
+- **The re-render swap is not atomic.** Its state check is a plain read, not a conditional `UPDATE`. Invariant 5
+  still holds: leaving RENDERED never approves a clip.
+- **Real media is tested in CI and Docker only.** The Mac has no ffmpeg or mediapipe, so `make test` there skips the
+  real-render tests.
+- **No benchmark yet.** Render speed on real footage is unmeasured until Phase 3 (P3.1).
+- **TikTok `SELF_ONLY` + branded content** is the open question above.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
