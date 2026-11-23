@@ -51,7 +51,6 @@ def test_help_lists_every_command() -> None:
         (["campaign", "check", "1"], "Phase 1 A"),
         (["source", "add", "1", "https://cdn.example.com/a.mp4"], "Phase 1 A"),
         (["worker"], "Phase 1 D"),
-        (["bot"], "Phase 1 D"),
         (["report", "weekly"], "Phase 1 D"),
         (["export-reconcile"], "Phase 1 D"),
         (["import-reconcile", str(REPO / "README.md")], "Phase 1 D"),
@@ -66,7 +65,9 @@ def test_later_phase_commands_name_their_owner(args: list[str], owner: str) -> N
 
 
 def test_every_target_is_known_to_be_missing_now() -> None:
-    for command in cli.TARGETS:
+    for command, target in cli.TARGETS.items():
+        if "Phase 1 D" in target.owner:  # implemented by feat/ops; checked in tests/ops/test_cli_targets.py
+            continue
         with pytest.raises(cli.NotImplementedYet):
             cli.resolve(command)
 
