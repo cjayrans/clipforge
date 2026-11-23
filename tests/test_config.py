@@ -148,3 +148,41 @@ def test_secret_errors_never_echo_values(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "TELEGRAM_OWNER_CHAT_ID" in str(info.value)
     assert "maybe-sensitive" not in str(info.value)
     assert info.value.__cause__ is None
+
+
+@pytest.mark.parametrize("text", ["", "   ", "\t\n"])
+def test_blank_ad_label_text_rejected(tmp_path: Path, text: str) -> None:
+    """COMPLIANCE #3 hardening (docs/contract-requests/render.md 2b): a blank label would render invisibly."""
+    data = _raw()
+    data["render"]["ad_label_text"] = text
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml.safe_dump(data))
+    with pytest.raises(ConfigError, match="ad_label_text"):
+        load_app_config(p)
+
+
+def test_ad_label_text_is_stripped(tmp_path: Path) -> None:
+    data = _raw()
+    data["render"]["ad_label_text"] = "  Ad "
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml.safe_dump(data))
+    assert load_app_config(p).render.ad_label_text == "Ad"
+
+
+def test_transcribe_block_optional_with_defaults(tmp_path: Path) -> None:
+    """CR-A2: the block is optional so older config files stay valid."""
+    data = _raw()
+    data.pop("transcribe", None)
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml.safe_dump(data))
+    cfg = load_app_config(p).transcribe
+    assert (cfg.local_fallback, cfg.local_model, cfg.language) == (True, "large-v3-turbo", "en")
+
+
+def test_transcribe_block_rejects_unknown_keys(tmp_path: Path) -> None:
+    data = _raw()
+    data["transcribe"] = {"local_fallback": False, "bogus": 1}
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml.safe_dump(data))
+    with pytest.raises(ConfigError, match="bogus"):
+        load_app_config(p)

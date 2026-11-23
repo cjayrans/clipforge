@@ -10,11 +10,12 @@ Checks (one `QACheck` each, all run so the report lists every problem):
 - `campaign_active`, and per platform `platform:<p>` via `compliance.assert_platform_allowed` (PRD F15, invariant 9).
 - per platform `caption:<p>`: present, starts with "#ad ", every campaign `required_tags` present, within the
   platform limit, no URLs on X (invariants 2, 9).
+- `youtube_title` when YouTube is a target: present, and "#ad " + title within the 100-character limit (the payload
+  builder prefixes "#ad ", publish/upload_post.py).
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 
@@ -93,9 +94,19 @@ def platform_check(campaign: Campaign, platform: Platform, enabled: Iterable[Pla
     return _check(f"platform:{platform.value}", [])
 
 
-def has_tag(text: str, tag: str) -> bool:
-    """Same rule as `compliance.normalize_caption`: whole tag, case-insensitive, not part of a longer tag."""
-    return re.search(rf"(?<![\w#]){re.escape(tag)}(?![\w])", text, re.IGNORECASE) is not None
+has_tag = compliance.has_tag  # one rule for normalize_caption and QA (Phase 2: was a copy of the regex)
+
+
+def youtube_title_check(title: str | None) -> QACheck:
+    text = (title or "").strip()
+    if not text:
+        return _check("youtube_title", ["no YouTube title"])
+    full = f"{compliance.AD_PREFIX} {text}"
+    if len(full) > compliance.YOUTUBE_TITLE_LIMIT:
+        return _check(
+            "youtube_title", [f"title is {len(full)} chars with '#ad ', limit {compliance.YOUTUBE_TITLE_LIMIT}"]
+        )
+    return _check("youtube_title", [])
 
 
 def caption_check(platform: Platform, caption: str | None, required_tags: Iterable[str] = ()) -> QACheck:
@@ -128,6 +139,7 @@ def run_qa(
     fps: float = 30.0,
     enabled: Iterable[Platform] | None = None,
     file_check: QACheck | None = None,
+    youtube_title: str | None = None,
 ) -> QAReport:
     """Pure QA over already-gathered facts. `platforms` are the platforms this clip is meant for."""
     enabled_list = list(enabled) if enabled is not None else None
@@ -147,6 +159,8 @@ def run_qa(
     for platform in platforms:
         checks.append(platform_check(campaign, platform, enabled_list))
         checks.append(caption_check(platform, captions.get(platform), campaign.required_tags))
+        if platform is Platform.YOUTUBE:
+            checks.append(youtube_title_check(youtube_title))
     return QAReport(clip_path=manifest.clip_path, checks=checks)
 
 
@@ -167,6 +181,7 @@ def qa_clip(
     fps: float = 30.0,
     enabled: Iterable[Platform] | None = None,
     probe_fn: Callable[[Path], ProbeResult] = probe,
+    youtube_title: str | None = None,
 ) -> QAReport:
     """QA a rendered file on disk: integrity, ffprobe, then `run_qa`. A probe failure is a failed report."""
     file_check = file_integrity_check(manifest)
@@ -176,4 +191,14 @@ def qa_clip(
         p = probe_fn(Path(manifest.clip_path))
     except ProbeError as exc:
         return QAReport(clip_path=manifest.clip_path, checks=[file_check, _check("probe", [str(exc)])])
-    return run_qa(manifest, p, campaign, platforms, captions, fps=fps, enabled=enabled, file_check=file_check)
+    return run_qa(
+        manifest,
+        p,
+        campaign,
+        platforms,
+        captions,
+        fps=fps,
+        enabled=enabled,
+        file_check=file_check,
+        youtube_title=youtube_title,
+    )

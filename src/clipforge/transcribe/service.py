@@ -23,7 +23,7 @@ import shutil
 from pathlib import Path
 from typing import Literal, Protocol
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from clipforge.config import Settings
 from clipforge.db import SourceRow, TranscriptRow
@@ -69,6 +69,7 @@ def _transcribe_chunks(
     chunks: list[tuple[ChunkResult, Path]],
     transcriber: Transcriber | None,
     local: Transcriber | None,
+    ledger: sessionmaker[Session] | None = None,
 ) -> tuple[Transcriber, list[ChunkResult], str | None, float]:
     """Groq first; if one chunk fails `GROQ_FAILURES_BEFORE_FALLBACK` times, redo the whole source locally.
 
@@ -79,7 +80,7 @@ def _transcribe_chunks(
     last_error: TranscriberError | None = None
     primary: Transcriber | None
     try:
-        primary = transcriber or GroqTranscriber(session, settings)
+        primary = transcriber or GroqTranscriber(session, settings, ledger=ledger)
     except TranscriberError as exc:  # e.g. GROQ_API_KEY not set
         primary, last_error = None, exc
 
@@ -115,6 +116,9 @@ def _transcribe_chunks(
     alerts.alert_operator(
         session, alerts.TRANSCRIBE_FALLBACK, source.id, f"Groq failed ({last_error}); transcribing locally (slow)"
     )
+    # Commit the alert now: the local transcription can take an hour on CPU, and an open write transaction would block
+    # the bot's writes (approvals) on the shared SQLite file for all of that time.
+    session.commit()
     try:
         local_results: list[ChunkResult] = []
         local_language: str | None = None
@@ -136,14 +140,20 @@ def transcribe_source(
     transcriber: Transcriber | None = None,
     local: Transcriber | None | Literal["auto"] = "auto",
     runner: media.Runner = media.run,
+    ledger: sessionmaker[Session] | None = None,
 ) -> Transcript:
     """Transcribe a DOWNLOADED source; see the module docstring.
 
-    `transcriber` defaults to Groq. `local` is the fallback: "auto" builds a faster-whisper LocalTranscriber when
-    `local_fallback_enabled(settings)`; None disables the fallback.
+    `transcriber` defaults to Groq (with `ledger`, its cost rows commit on their own; see GroqTranscriber). `local` is
+    the fallback: "auto" builds a faster-whisper LocalTranscriber when `local_fallback_enabled(settings)`; None
+    disables the fallback.
     """
     if local == "auto":
-        local = LocalTranscriber(local_model_name(settings)) if local_fallback_enabled(settings) else None
+        local = (
+            LocalTranscriber(local_model_name(settings), language=settings.app.transcribe.language)
+            if local_fallback_enabled(settings)
+            else None
+        )
     if source.status is not SourceStatus.DOWNLOADED:
         raise TranscriberError(f"source {source.id} is {source.status.value}, not downloaded")
     if not source.local_path or not Path(source.local_path).is_file():
@@ -157,7 +167,9 @@ def transcribe_source(
         paths = audio.cut_chunks(audio_path, plans, work / "chunks", runner)
         chunks = [(ChunkResult(p), path) for p, path in zip(plans, paths, strict=True)]
 
-        backend, results, language, cost = _transcribe_chunks(session, settings, source, chunks, transcriber, local)
+        backend, results, language, cost = _transcribe_chunks(
+            session, settings, source, chunks, transcriber, local, ledger
+        )
     except media.MediaToolError as exc:
         alerts.alert_operator(session, alerts.TRANSCRIBE_FAILED, source.id, f"audio extraction failed: {exc}")
         raise TranscriberError(str(exc)) from exc

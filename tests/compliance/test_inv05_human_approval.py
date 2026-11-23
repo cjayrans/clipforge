@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
+import respx
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from clipforge.compliance import ComplianceError, assert_human_approved
 from clipforge.config import Settings
-from clipforge.db import ClipRow, IllegalTransition, PostRow, transition
+from clipforge.db import ClipRow, IllegalTransition, PostRow, session_scope, transition
+from clipforge.pipeline import PipelineDeps, begin_rerender, finish_rerender, run_once
+from clipforge.publish.dispatcher import dispatch_due_slots
+from clipforge.publish.queries import approvals_for
+from clipforge.review.evening import arm_evening
+from clipforge.review.service import approve_clip, render_stamp
 from clipforge.schemas import Approval, ApprovalDecision, ClipState, RejectReason
 from tests.support.factories import Factory
+from tests.support.pipeline_fixtures import add_campaign
 
 RENDERED = datetime(2026, 11, 23, 6, 0, tzinfo=UTC)
+APPROVED_AT = datetime(2026, 11, 24, 0, 50, tzinfo=UTC)  # 19:50 ET
+ARMED_AT = datetime(2026, 11, 24, 1, 1, tzinfo=UTC)  # 20:01 ET
+SLOT_AT = datetime(2026, 11, 24, 1, 10, tzinfo=UTC)  # 20:10 ET
 
 
 def _a(decision: ApprovalDecision, minutes: int) -> Approval:
@@ -70,3 +80,33 @@ def test_dispatcher_skips_stale_approval(factory: Factory, session: Session, set
     dispatch_due_slots(session, settings, now=datetime(2026, 11, 24, 1, 10, tzinfo=UTC))
     assert session.scalars(select(PostRow).where(PostRow.clip_id == clip.id)).all() == []
     assert session.get(ClipRow, clip.id).state is not ClipState.PUBLISHED  # type: ignore[union-attr]
+
+
+def test_rerender_makes_earlier_approval_stale(
+    pipe_settings: Settings,
+    db: sessionmaker[Session],
+    deps: PipelineDeps,
+    mocked_http: respx.MockRouter,
+) -> None:
+    """Phase 2: New hook / Shorter set a newer `rendered_at`, so the approval given before them no longer counts and
+    the dispatcher publishes nothing until the operator approves the new render (docs/contract-requests/ops.md 4)."""
+    add_campaign(db, pipe_settings)
+    assert run_once(pipe_settings, deps=deps).ready >= 1
+    with session_scope(db) as s:
+        clip = s.scalars(select(ClipRow).where(ClipRow.state == ClipState.PENDING_REVIEW)).first()
+        assert clip is not None
+        clip_id = clip.id
+        approve_clip(s, clip_id, stamp=render_stamp(clip.rendered_at), now=APPROVED_AT)
+    job = begin_rerender(pipe_settings, db, clip_id, "new_hook", APPROVED_AT + timedelta(minutes=1))
+    finish_rerender(pipe_settings, db, job, deps)
+    with session_scope(db) as s:
+        clip = s.get(ClipRow, clip_id)
+        assert clip is not None
+        assert clip.state is ClipState.PENDING_REVIEW
+        with pytest.raises(ComplianceError):
+            assert_human_approved(approvals_for(s, clip_id), clip.rendered_at)
+    with session_scope(db) as s:
+        arm_evening(s, pipe_settings, ARMED_AT, day=date(2026, 11, 23))
+    with session_scope(db) as s:
+        assert dispatch_due_slots(s, pipe_settings, SLOT_AT) == []
+        assert s.scalars(select(PostRow)).all() == []

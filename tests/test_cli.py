@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from clipforge import cli, costs
@@ -41,27 +40,17 @@ def test_help_lists_every_command() -> None:
         assert name in out
 
 
-@pytest.mark.parametrize(
-    ("args", "owner"),
-    [
-        (["run", "--once"], "Phase 2"),
-    ],
-)
-def test_later_phase_commands_name_their_owner(args: list[str], owner: str) -> None:
-    code, out = _run(*args)
-    assert code == cli.EXIT_NOT_IMPLEMENTED
-    assert owner in out
-    assert "clipforge." in out
+def test_every_target_resolves() -> None:
+    """Phase 2: every `cf` command is implemented (P2.6); `resolve` never raises NotImplementedYet any more."""
+    for command in cli.TARGETS:
+        assert callable(cli.resolve(command)), command
 
 
-def test_every_target_is_known_to_be_missing_now() -> None:
-    # Phase 1 A implemented ingest.* (tests/ingest/test_cli_campaign.py); Phase 1 D implemented the rest of the
-    # Phase 1 targets (tests/ops/test_cli_targets.py).
-    for command, target in cli.TARGETS.items():
-        if target.module.startswith("ingest.") or "Phase 1 D" in target.owner:
-            continue
-        with pytest.raises(cli.NotImplementedYet):
-            cli.resolve(command)
+def test_run_once_on_empty_db_prints_a_summary() -> None:
+    """`cf run --once` with nothing registered: no paid call, a summary, exit 0."""
+    code, out = _run("run", "--once")
+    assert code == 0, out
+    assert "nightly run: 0 clip(s) ready for review" in out
 
 
 def test_status_and_costs_on_fresh_db() -> None:

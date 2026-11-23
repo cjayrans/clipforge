@@ -48,55 +48,55 @@ locally; Phase 2 resolves it.
 ## Phase 1 — Modules (four parallel worktrees)
 
 ### A — `feat/ingest-transcribe` (owns `ingest/`, `transcribe/`, their tests)
-- [ ] A1 Campaign registry CRUD on `schemas.CampaignIn`; `cf campaign add --from-json`, `list`, `drain`, `end`.
-- [ ] A2 Source registration + download (Drive/Dropbox/direct) with invariant 1, SHA-256, ffprobe duration.
-- [ ] A2c Twitch via yt-dlp gated on `allow_stream_download`; YouTube/Kick/other hosts refused with alert; `inbox/` drop folder (ARCHITECTURE 4.1).
-- [ ] A2b Folder links (Drive/Dropbox): list files, register each as a source of the campaign, hash each (PRD F17).
-- [ ] A3 Audio extraction + chunker (pure planning function + ffmpeg runner) with overlap merge.
-- [ ] A4 Groq client (retries, cost recording, word timestamps) → `schemas.Transcript`; respx-mocked tests.
-- [ ] A4b No-speech guard: under 20 words per minute → source FAILED, reason `no_speech`, operator alert (PRD F17).
-- [ ] A5 Local faster-whisper fallback (behind a flag; test with `tiny` model marked slow).
-- [ ] A6 Purge job.
+- [x] A1 Campaign registry CRUD on `schemas.CampaignIn`; `cf campaign add --from-json`, `list`, `drain`, `end`.
+- [x] A2 Source registration + download (Drive/Dropbox/direct) with invariant 1, SHA-256, ffprobe duration.
+- [x] A2c Twitch via yt-dlp gated on `allow_stream_download`; YouTube/Kick/other hosts refused with alert; `inbox/` drop folder (ARCHITECTURE 4.1).
+- [x] A2b Folder links (Drive/Dropbox): list files, register each as a source of the campaign, hash each (PRD F17).
+- [x] A3 Audio extraction + chunker (pure planning function + ffmpeg runner) with overlap merge.
+- [x] A4 Groq client (retries, cost recording, word timestamps) → `schemas.Transcript`; respx-mocked tests.
+- [x] A4b No-speech guard: under 20 words per minute → source FAILED, reason `no_speech`, operator alert (PRD F17).
+- [x] A5 Local faster-whisper fallback (behind a flag; test with `tiny` model marked slow).
+- [x] A6 Purge job.
 
 ### B — `feat/rank` (owns `rank/`, `prompts/`, `evals/`, their tests)
-- [ ] B1 Window builder (pure) with energy pre-score input; property tests on boundaries and lengths.
-- [ ] B2 `prompts/score_windows.md`, `prompts/clip_copy.md` (versioned headers), few-shot injection.
-- [ ] B3 Haiku scorer with forced tool + JSON schema → `schemas.WindowScore`; batching; cost recording.
-- [ ] B4 Sonnet copywriter → `schemas.ClipCopy`, then `compliance.normalize_caption`.
-- [ ] B5 Eval harness `uv run python -m evals.run` on fixture transcripts; report schema validity and top-k overlap
+- [x] B1 Window builder (pure) with energy pre-score input; property tests on boundaries and lengths.
+- [x] B2 `prompts/score_windows.md`, `prompts/clip_copy.md` (versioned headers), few-shot injection.
+- [x] B3 Haiku scorer with forced tool + JSON schema → `schemas.WindowScore`; batching; cost recording.
+- [x] B4 Sonnet copywriter → `schemas.ClipCopy`, then `compliance.normalize_caption`.
+- [x] B5 Eval harness `uv run python -m evals.run` on fixture transcripts; report schema validity and top-k overlap
       with `evals/labels.csv`.
 
 ### C — `feat/render` (owns `render/`, `qa/`, `assets/`, their tests)
-- [ ] C1 Shot detection wrapper.
-- [ ] C2 Reframe planner (pure core over detections) + MediaPipe adapter → `schemas.CropPlan`; fit_blur mode.
-- [ ] C2b Default to fit_blur when no face is detected or `content_kind == "game"` (PRD F16); test with a face-less fixture.
-- [ ] C3 ASS caption generator (pure) with word highlight and safe zone; 3 style presets.
-- [ ] C4 Overlays: hook text, "Ad" label (invariant 3).
-- [ ] C5 Encoder + `schemas.RenderManifest`; only source audio mapped (invariant 10).
-- [ ] C6 QA checks → `schemas.QAReport`; 480p preview proxy for Telegram when > 50 MB.
-- [ ] C7 Benchmark script `scripts/bench_render.py` (prints seconds per output second).
+- [x] C1 Shot detection wrapper.
+- [x] C2 Reframe planner (pure core over detections) + MediaPipe adapter → `schemas.CropPlan`; fit_blur mode.
+- [x] C2b Default to fit_blur when no face is detected or `content_kind == "game"` (PRD F16); test with a face-less fixture.
+- [x] C3 ASS caption generator (pure) with word highlight and safe zone; 3 style presets.
+- [x] C4 Overlays: hook text, "Ad" label (invariant 3).
+- [x] C5 Encoder + `schemas.RenderManifest`; only source audio mapped (invariant 10).
+- [x] C6 QA checks → `schemas.QAReport`; 480p preview proxy for Telegram when > 50 MB.
+- [x] C7 Benchmark script `scripts/bench_render.py` (prints seconds per output second).
 
 ### D — `feat/ops` (owns `review/`, `publish/`, `track/`, `scheduler/`, their tests)
-- [ ] D1 Telegram bot: owner-only guard, previews, approve/reject/new-hook/shorter callbacks (new-hook/shorter call
+- [x] D1 Telegram bot: owner-only guard, previews, approve/reject/new-hook/shorter callbacks (new-hook/shorter call
       stubs that Phase 2 wires), `/status`, `/queue`, `/skip`, `/costs`.
-- [ ] D2 Evening flow: arm message, submit-now messages, reminders, Submitted/Missed.
-- [ ] D3 Slot planner (pure) + dispatcher with modes `dry_run`/`private`/`live`; invariants 5, 6, 11.
-- [ ] D4 Upload-Post client: payload builder (invariants 2, 4, 8, 9), publish, status polling — field names verified
+- [x] D2 Evening flow: arm message, submit-now messages, reminders, Submitted/Missed.
+- [x] D3 Slot planner (pure) + dispatcher with modes `dry_run`/`private`/`live`; invariants 5, 6, 11.
+- [x] D4 Upload-Post client: payload builder (invariants 2, 4, 8, 9), publish, status polling — field names verified
       against the docs (note what you verified in the PR).
-- [ ] D5 Track: reconcile (bot + CSV), YouTube views, weekly learning, weekly/monthly reports.
-- [ ] D6 APScheduler wiring for all jobs in ARCHITECTURE §4.9.
+- [x] D5 Track: reconcile (bot + CSV), YouTube views, weekly learning, weekly/monthly reports.
+- [x] D6 APScheduler wiring for all jobs in ARCHITECTURE §4.9.
 
 Each Phase 1 branch is done when its tests pass, `make lint` is clean, the `compliance-reviewer` subagent has reviewed
 the diff, and a PR is open against `main` with a summary of verified external facts.
 
-## Phase 2 — Integration (one session, `main`)
-- [ ] P2.1 Merge A→B→C→D PRs; resolve `docs/contract-requests/`.
-- [ ] P2.2 `pipeline.py`: nightly orchestration with per-stage error isolation, early stop at candidate target,
+## Phase 2 — Integration (one session, branch `feat/phase2`; see docs/pr-descriptions/phase2.md)
+- [x] P2.1 Merge A→B→C→D PRs; resolve `docs/contract-requests/`.
+- [x] P2.2 `pipeline.py`: nightly orchestration with per-stage error isolation, early stop at candidate target,
       spend-cap pause.
-- [ ] P2.3 Wire bot New hook / Shorter to rank + render.
-- [ ] P2.4 End-to-end test (PRD §7.2) fully mocked.
-- [ ] P2.5 Remove every `xfail` in `tests/compliance/`; all pass.
-- [ ] P2.6 Make targets work end to end; `make up` runs both services healthy.
+- [x] P2.3 Wire bot New hook / Shorter to rank + render.
+- [x] P2.4 End-to-end test (PRD §7.2) fully mocked.
+- [x] P2.5 Remove every `xfail` in `tests/compliance/`; all pass.
+- [x] P2.6 Make targets work end to end; `make up` runs both services healthy.
 
 ## Phase 3 — Live readiness (one session, on the Mac)
 - [ ] P3.1 Run `scripts/bench_render.py` on a real campaign file; tune `-crf`/threads so a 2 × 1 h nightly run

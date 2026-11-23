@@ -1,5 +1,7 @@
 # Contract requests from `feat/render` (Phase 1 C)
 
+**Status (Phase 2):** 1 done (Dockerfile + build-time font/model check), 2b done (config rejects a blank label), 3 done (pipeline passes these inputs), 2 (`CLIPFORGE_ASSETS_DIR`) declined: discovery works in the repo, CI and `/app`. Details: docs/pr-descriptions/phase2.md.
+
 No change to `schemas.py` is needed. The requests below touch files that Phase 1 branches may not edit.
 
 ## 1. Dockerfile: copy `assets/` into the image (required)

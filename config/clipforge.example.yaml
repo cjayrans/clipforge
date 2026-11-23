@@ -71,6 +71,11 @@ campaign_filter:             # Used by `cf campaign check` and the Claude chat p
 youtube:
   category_id: "22"
 
+transcribe:                  # optional; these are the defaults
+  local_fallback: true        # faster-whisper on CPU when Groq fails twice (slow)
+  local_model: large-v3-turbo # faster-whisper size name
+  language: en                # passed to Groq and faster-whisper
+
 retention:
   source_days_after_terminal: 7
   clip_days: 30

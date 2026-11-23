@@ -1,5 +1,7 @@
 # Contract requests: `feat/ingest-transcribe` (Phase 1 A)
 
+**Status (Phase 2): all resolved.** CR-A1 closed (bot delivers `events(entity="alert")`; ingest delegates to `review.alerts.raise_alert`), CR-A2 `transcribe:` config block, CR-A3 `cf campaign check` exits 1, CR-A4 docstring fixed, CR-A5 wired in `pipeline.py` (+ `cf source retry`, expiry on drain/end), CR-A6 `compliance.is_refused_platform_url`. Details: docs/pr-descriptions/phase2.md.
+
 None of these block merging A. Each is stubbed locally in `ingest/` or `transcribe/`. Phase 2 (P2.1) resolves them.
 
 ## CR-A1. Operator alert delivery (bot)

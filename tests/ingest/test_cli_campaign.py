@@ -66,3 +66,52 @@ def test_unknown_campaign_is_a_clean_error() -> None:
     code, out = _run("campaign", "check", "42")
     assert code == 1
     assert "no campaign with id 42" in out
+
+
+def test_campaign_check_exits_1_when_a_check_fails(tmp_path: Path) -> None:
+    """CR-A3: `cf campaign check` exits non-zero when the campaign fails the filter."""
+    import json
+
+    data = json.loads(ASIANJEFF.read_text())
+    data["footage_mode"] = "own_gameplay"  # never allowed by campaign_filter.allowed_footage_modes
+    data["name"] = "Own Gameplay Campaign"
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(data))
+    code, out = _run("campaign", "add", "--from-json", str(bad))
+    assert code == 0, out
+    code, out = _run("campaign", "check", "1")
+    assert code == cli.EXIT_CHECK_FAILED, out
+    assert "FAIL" in out
+
+
+def test_source_retry_end_to_end() -> None:
+    """CR-A5: `cf source retry` puts a FAILED source back to REGISTERED with an events row."""
+    from clipforge.ingest.models import set_source_status
+    from clipforge.schemas import SourceStatus
+
+    assert _run("campaign", "add", "--from-json", str(ASIANJEFF))[0] == 0
+    assert _run("source", "add", "1", "https://cdn.example.com/ep1.mp4")[0] == 0
+    code, out = _run("source", "retry", "1")
+    assert code == 1
+    assert "only failed sources" in out
+
+    engine = make_engine(load_settings().database_url)
+    fac = make_session_factory(engine)
+    with session_scope(fac) as s:
+        src = s.get(SourceRow, 1)
+        assert src is not None
+        set_source_status(s, src, SourceStatus.FAILED, fail_reason="download_failed")
+    code, out = _run("source", "retry", "1")
+    assert code == 0, out
+    assert "-> registered" in out
+    with session_scope(fac) as s:
+        src = s.get(SourceRow, 1)
+        assert src is not None
+        assert src.status is SourceStatus.REGISTERED
+        assert src.fail_reason is None
+        last = s.scalars(select(EventRow).where(EventRow.entity == "source").order_by(EventRow.id.desc())).first()
+        assert last is not None
+        assert last.actor == "operator"
+        assert "retry after download_failed" in last.detail
+    assert _run("source", "retry", "99")[0] == 1
+    engine.dispose()

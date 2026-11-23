@@ -98,3 +98,30 @@ def test_downloader_refuses_youtube_source(factory: Factory, session: Session, s
     src = factory.source(c, url="https://www.youtube.com/watch?v=abc")
     with pytest.raises(ComplianceError):
         download_source(session, settings, src)
+
+
+@pytest.mark.parametrize(
+    ("url", "refused"),
+    [
+        ("https://www.tiktok.com/@x/video/1.mp4", True),
+        ("https://cdn.instagram.com/v.mp4", True),
+        ("https://x.com/a/status/1", True),
+        ("https://twitter.com/a.mp4", True),
+        ("https://m.facebook.com/v.mp4", True),
+        ("https://fb.watch/abc", True),
+        ("https://app.contentrewards.com/campaign/1", True),
+        ("https://vyro.app/c/1", True),
+        ("https://TikTok.com./v.mp4", True),
+        ("not a url", True),
+        ("https://cdn.example.com/vod.mp4", False),
+        ("https://notiktok.com/v.mp4", False),
+        ("https://dl.dropboxusercontent.com/s/a/v.mp4", False),
+    ],
+)
+def test_is_refused_platform_url(url: str, refused: bool) -> None:
+    """CR-A6: the public check the downloader uses for direct links and redirect targets."""
+    from clipforge.compliance import is_refused_platform_url
+    from clipforge.ingest.download import is_refused_platform_host
+
+    assert is_refused_platform_url(url) is refused
+    assert is_refused_platform_host(url) is refused

@@ -39,8 +39,9 @@ note in your summary, because four parallel branches depend on it.
 - ffmpeg + libass (Debian package) for cutting, cropping, captions, encoding (`libx264 -preset veryfast`).
 - MediaPipe Tasks FaceDetector for reframing. PySceneDetect for shot boundaries.
 - Groq `whisper-large-v3-turbo` for transcription; `faster-whisper` (CPU, int8) fallback.
-- Anthropic API: `claude-haiku-5-5` (ranking), `claude-sonnet-5-5` (hooks, captions). Structured output via forced
-  tool use with a JSON schema.
+- Anthropic API: `claude-haiku-5-5` (ranking), `claude-sonnet-5-5` (hooks, captions). Structured output: forced
+  strict tool on Haiku; `output_config.format` JSON schema on Sonnet (Sonnet 5.5 rejects forced tool choice). No
+  `temperature` (both models reject it).
 - Upload-Post REST API for publishing (`httpx`). Telegram via `python-telegram-bot` v21+.
 - SQLite via SQLAlchemy 2.0 + Alembic. APScheduler for jobs. Typer for the `cf` CLI.
 
@@ -80,7 +81,8 @@ tests/            # mirrors src/; tests/compliance/ holds invariant tests
 ## Conventions
 
 - Every external call goes through one client class per service, with timeouts, retries (tenacity, exponential,
-  max 3) and cost recording. Mock all external HTTP in tests with `respx`.
+  max 3) and cost recording. Mock all external HTTP in tests: `respx` for httpx clients; `httpx2.MockTransport` for
+  the anthropic SDK (it sends through httpx2, which respx cannot patch; see tests/rank/anthropic_mock.py).
 - Pure functions for anything testable without I/O (windowing, crop paths, ASS generation, caption rules).
 - Every state change of a clip/post writes an `events` row (audit log).
 - Times: store UTC; schedule and display in `America/New_York`.

@@ -61,6 +61,7 @@ TARGETS: dict[str, Target] = {
     "campaign end": Target("ingest.registry", "set_campaign_status", "Phase 1 A (feat/ingest-transcribe)"),
     "campaign check": Target("ingest.registry", "check_campaign", "Phase 1 A (feat/ingest-transcribe)"),
     "source add": Target("ingest.registry", "add_source", "Phase 1 A (feat/ingest-transcribe)"),
+    "source retry": Target("ingest.registry", "retry_source", "Phase 2 (P2.1)"),
     "worker": Target("scheduler.worker", "run_worker", "Phase 1 D (feat/ops)"),
     "bot": Target("review.bot", "run_bot", "Phase 1 D (feat/ops)"),
     "report weekly": Target("track.reports", "weekly_report", "Phase 1 D (feat/ops)"),
@@ -71,6 +72,7 @@ TARGETS: dict[str, Target] = {
 
 EXIT_NOT_IMPLEMENTED = 3
 EXIT_CONFIG = 2
+EXIT_CHECK_FAILED = 1
 
 
 class NotImplementedYet(RuntimeError):
@@ -195,14 +197,22 @@ def campaign_end(ctx: typer.Context, campaign_id: int) -> None:
 
 @campaign_app.command("check")
 def campaign_check(ctx: typer.Context, campaign_id: int) -> None:
-    """Apply the campaign filter in config (campaign_filter) to a registered campaign."""
-    _delegate(ctx, "campaign check", campaign_id)
+    """Apply the campaign filter in config (campaign_filter) to a registered campaign. Exits 1 if any check fails."""
+    checks = _delegate(ctx, "campaign check", campaign_id)
+    if checks and not all(c.passed for c in checks):
+        raise typer.Exit(EXIT_CHECK_FAILED)
 
 
 @source_app.command("add")
 def source_add(ctx: typer.Context, campaign_id: int, url: str) -> None:
     """Register a footage URL (or folder link) on a campaign. Only registered URLs can be downloaded."""
     _delegate(ctx, "source add", campaign_id, url)
+
+
+@source_app.command("retry")
+def source_retry(ctx: typer.Context, source_id: int) -> None:
+    """Put a failed source back in the queue; the next nightly run downloads it again."""
+    _delegate(ctx, "source retry", source_id)
 
 
 # --- long-running processes and reports (Phase 1 D / Phase 2) -----------------------------------------
@@ -229,7 +239,10 @@ def run(
     if not once:
         err.print("Use `cf run --once` (the scheduled run happens inside `cf worker`).")
         raise typer.Exit(EXIT_CONFIG)
-    _delegate(ctx, "run --once", with_session=False)
+    report = _delegate(ctx, "run --once", with_session=False)
+    summary = getattr(report, "summary", None)
+    if callable(summary):
+        console.print(summary())
 
 
 @report_app.command("weekly")

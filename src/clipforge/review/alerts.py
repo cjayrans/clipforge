@@ -29,11 +29,26 @@ WORKER_STALE = "worker_stale"
 JOB_FAILED = "job_failed"
 PREVIEW_TOO_BIG = "preview_too_big"
 
+# Kinds raised by the nightly pipeline and the New hook / Shorter re-render (Phase 2).
+PIPELINE_STAGE_FAILED = "pipeline_stage_failed"
+PIPELINE_EMPTY = "pipeline_empty"
+RANK_EMPTY = "rank_empty"
+RENDER_FAILED = "render_failed"
+RERENDER_FAILED = "rerender_failed"
+
 _URL_QUERY_RE = re.compile(r"(\b[a-z][a-z0-9+.-]*://[^\s?#]+)\?[^\s#]*", re.IGNORECASE)
 
 
+def redact_urls(text: str) -> str:
+    """Drop query strings from URLs in `text` (signed links, Dropbox `rlkey`), keeping scheme, host and path."""
+    return _URL_QUERY_RE.sub(r"\1?…", text)
+
+
 def raise_alert(session: Session, kind: str, entity_id: int | str, message: str) -> EventRow:
-    """Record an alert for the operator. Flushes via the session; the caller commits."""
-    clean = _URL_QUERY_RE.sub(r"\1?…", message)
+    """Record an alert for the operator. Flushes; the caller commits. The one implementation every module uses
+    (ingest.alerts.alert_operator delegates here); the bot delivers it (review.deliver)."""
+    clean = redact_urls(message)
     log.warning("operator alert [%s] %s: %s", kind, entity_id, clean)
-    return record_event(session, ALERT_ENTITY, entity_id, None, kind, actor="system", detail=clean)
+    ev = record_event(session, ALERT_ENTITY, entity_id, None, kind, actor="system", detail=clean)
+    session.flush()
+    return ev

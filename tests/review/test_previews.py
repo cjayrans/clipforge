@@ -212,3 +212,21 @@ def test_watchdog_alerts_once_per_evening(session: Session, settings: Settings) 
     kinds = [e.to_state for e in session.scalars(select(EventRow).where(EventRow.entity == "alert"))]
     assert kinds == [alerts.WORKER_STALE]
     assert check_worker_heartbeat(session, settings, EVENING + timedelta(days=1))  # next evening alerts again
+
+
+async def test_ingest_alerts_reach_the_operator(engine: Engine, notifier: FakeNotifier) -> None:
+    """CR-A1 close-out: alerts written by ingest/transcribe (`ingest.alerts.alert_operator`) are delivered by the bot,
+    with URL query strings already removed."""
+    from clipforge.ingest import alerts as ingest_alerts
+
+    fac = make_session_factory(engine)
+    with session_scope(fac) as s:
+        ingest_alerts.alert_operator(
+            s, ingest_alerts.HOST_REFUSED, 7, "download refused: https://www.youtube.com/watch?v=abc&token=secret"
+        )
+        ingest_alerts.alert_operator(s, ingest_alerts.NO_SPEECH, 8, "source 8 has 4 words per minute")
+    assert await deliver_pending_alerts(fac, notifier) == 2
+    assert notifier.texts == [
+        "Alert (host_refused): download refused: https://www.youtube.com/watch?…",
+        "Alert (no_speech): source 8 has 4 words per minute",
+    ]

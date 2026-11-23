@@ -22,6 +22,8 @@ def backup_db(db_path: Path, backups_dir: Path, keep: int, *, now: datetime | No
         dst = sqlite3.connect(target)
         try:
             src.backup(dst)
+            # The live DB runs in WAL mode (db/session.py); a backup should be one self-contained file.
+            dst.execute("PRAGMA journal_mode=DELETE")
         finally:
             dst.close()
     finally:

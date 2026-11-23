@@ -118,6 +118,12 @@ def build_filtergraph(
     return ";".join(parts)
 
 
+# Pin the sample format and channel layout before the AAC encoder. Without it, Debian bookworm's ffmpeg 5.1 (the
+# Docker image) fails with "Cannot select channel layout for the link between filters Parsed_aresample_1 and
+# format_out" on loudnorm output; Ubuntu's newer ffmpeg (CI) negotiates it on its own. Mono stays mono.
+AUDIO_FORMAT = "aformat=sample_fmts=fltp:channel_layouts=mono|stereo"
+
+
 def build_ffmpeg_args(
     manifest: RenderManifest,
     *,
@@ -148,7 +154,7 @@ def build_ffmpeg_args(
         "-filter_complex", graph,
         "-map", "[v]", "-map", "0:a:0",
         "-c:v", "libx264", "-preset", s.preset, "-crf", str(s.crf), "-pix_fmt", "yuv420p", "-r", str(s.fps),
-        "-af", f"{loudnorm},aresample={s.audio_rate}",
+        "-af", f"{loudnorm},aresample={s.audio_rate},{AUDIO_FORMAT}",
         "-c:a", "aac", "-b:a", s.audio_bitrate, "-ar", str(s.audio_rate),
         "-t", f"{duration:.3f}", "-movflags", "+faststart",
         manifest.clip_path,

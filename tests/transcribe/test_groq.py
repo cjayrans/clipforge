@@ -7,13 +7,13 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 from tenacity import wait_none
 
 from clipforge import costs
 from clipforge.config import Settings, load_settings
-from clipforge.db import CostRow, EventRow, FlagRow, TranscriptRow
+from clipforge.db import CostRow, EventRow, FlagRow, TranscriptRow, make_session_factory
 from clipforge.schemas import SourceStatus
 from clipforge.transcribe import chunker, groq_client, service
 from clipforge.transcribe.groq_client import ChunkOutput, GroqTranscriber, TranscriberError
@@ -246,3 +246,73 @@ def test_spend_cap_propagates(session: Session, keyed_settings: Settings, factor
     with pytest.raises(costs.SpendCapReached):
         service.transcribe_source(session, keyed_settings, src, runner=fake_runner(90), local=None)
     assert src.status is SourceStatus.DOWNLOADED
+
+
+# --- Phase 2: cost ledger and configured language -----------------------------------------------------------
+
+
+@respx.mock
+def test_ledger_cost_rows_survive_caller_rollback(
+    engine: Engine, session: Session, keyed_settings: Settings, chunk_file: Path
+) -> None:
+    """COMPLIANCE #12: with a ledger, the Groq cost row commits on its own, so a caller rollback can't erase it."""
+    respx.post(GROQ_URL).mock(return_value=httpx.Response(200, json=VERBOSE))
+    ledger = make_session_factory(engine)
+    t = GroqTranscriber(session, keyed_settings, ledger=ledger)
+    t.transcribe_chunk(chunk_file, 60.0)
+    session.rollback()
+    with ledger() as s:
+        rows = s.scalars(select(CostRow)).all()
+    assert [(r.service, r.unit_kind, r.units) for r in rows] == [("groq", "audio_seconds", 60.0)]
+
+
+@respx.mock(assert_all_called=False)
+def test_ledger_guard_blocks_before_request(
+    engine: Engine, session: Session, keyed_settings: Settings, chunk_file: Path
+) -> None:
+    route = respx.post(GROQ_URL).mock(return_value=httpx.Response(200, json=VERBOSE))
+    ledger = make_session_factory(engine)
+    with ledger.begin() as s:
+        costs.pause(s, "test")
+    with pytest.raises(costs.SpendCapReached):
+        GroqTranscriber(session, keyed_settings, ledger=ledger).transcribe_chunk(chunk_file, 60.0)
+    assert not route.called
+
+
+@respx.mock
+def test_language_comes_from_config(
+    session: Session, keyed_settings: Settings, chunk_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    route = respx.post(GROQ_URL).mock(return_value=httpx.Response(200, json=VERBOSE))
+    app = keyed_settings.app.model_copy(
+        update={"transcribe": keyed_settings.app.transcribe.model_copy(update={"language": "de"})}
+    )
+    s2 = Settings(app=app, secrets=keyed_settings.secrets, env=keyed_settings.env)
+    GroqTranscriber(session, s2).transcribe_chunk(chunk_file, 60.0)
+    body = route.calls.last.request.content
+    assert b'name="language"\r\n\r\nde' in body
+    # An explicit argument still wins (None = let the model detect the language).
+    GroqTranscriber(session, s2, language=None).transcribe_chunk(chunk_file, 60.0)
+    assert b'name="language"' not in route.calls.last.request.content
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"text": "hello", "x_groq": {"id": "x"}},  # no word timestamps
+        {"text": "hello", "words": [{"word": "hi", "end": 1.0}], "x_groq": {"id": "x"}},  # a word without start
+    ],
+)
+def test_billed_response_that_fails_to_parse_is_still_recorded(
+    engine: Engine, session: Session, keyed_settings: Settings, chunk_file: Path, body: dict[str, object]
+) -> None:
+    """COMPLIANCE #12 (Phase 2 review): a 200 is billed even when its body is unusable; the cost row must exist so the
+    retry that follows can't spend past the cap unnoticed."""
+    respx.post(GROQ_URL).mock(return_value=httpx.Response(200, json=body))
+    ledger = make_session_factory(engine)
+    with pytest.raises(TranscriberError):
+        GroqTranscriber(session, keyed_settings, ledger=ledger).transcribe_chunk(chunk_file, 60.0)
+    session.rollback()
+    with ledger() as s:
+        assert [r.units for r in s.scalars(select(CostRow))] == [60.0]

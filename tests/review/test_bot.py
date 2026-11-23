@@ -193,7 +193,7 @@ async def test_default_hooks_are_stubs_that_change_nothing(deps: BotDeps, factor
     clip = pending_clip(factory, session)
     update = make_update(OWNER, keyboards.encode(keyboards.NEW_HOOK, clip.id))
     await on_callback(update, make_context(deps))
-    assert "Phase 2" in update.callback_query.message.reply_text.await_args.args[0]
+    assert "not available" in update.callback_query.message.reply_text.await_args.args[0]
     session.expire_all()
     assert session.get(ClipRow, clip.id).state is ClipState.PENDING_REVIEW  # type: ignore[union-attr]
 
