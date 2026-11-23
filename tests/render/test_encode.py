@@ -140,6 +140,12 @@ def test_filter_path_refuses_special_characters(bad: str) -> None:
         lambda a: [x if x != "0:a:0" else "[aout]" for x in a],
         lambda a: [*a[:-1], "-filter_complex", "amix=inputs=2", a[-1]],
         lambda a: [x for i, x in enumerate(a) if not (x == "-map" and a[i + 1] == "0:a:0") and x != "0:a:0"],
+        lambda a: [*a[:-1], "-map", "0", a[-1]],
+        lambda a: [x.replace("[0:v]", "movie=music.mp3[m];[0:v]") for x in a],
+        lambda a: [x.replace("[0:v]", "[0:a]anull[x];[0:v]") for x in a],
+        lambda a: [x if x != "-filter_complex" else "-filter_complex_script" for x in a],
+        lambda a: ["-stream_loop", "-1", *a],
+        lambda a: [x if not x.startswith("loudnorm") else "amovie=music.mp3,loudnorm" for x in a],
     ],
 )
 def test_maps_only_source_audio_detects_violations(mutate: object) -> None:

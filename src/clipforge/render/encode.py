@@ -12,6 +12,7 @@ what the manifest records as `audio_source_only`.
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Sequence
@@ -26,7 +27,10 @@ OUT_W, OUT_H = compliance.RENDER_WIDTH, compliance.RENDER_HEIGHT
 BLUR_W, BLUR_H = 270, 480  # background is blurred at quarter size, then scaled up (cheap on CPU)
 FFMPEG_TIMEOUT_S = 1800
 _UNSAFE_FILTER_CHARS = set(":\\',;[]=\n")
-_AUDIO_MIXERS = ("amix", "amerge", "amovie", "join=", "anullsrc", "sine=", "aevalsrc")
+_FORBIDDEN_FLAGS = frozenset({"-filter_complex_script", "-filter_script", "-stream_loop", "-lavfi_script"})
+_FILTER_FLAGS = frozenset({"-filter_complex", "-lavfi", "-vf", "-filter:v", "-af", "-filter:a"})
+# Audio pads ([0:a], [1:a:0]) or filters that read files or generate/mix audio.
+_AUDIO_FILTER_RE = re.compile(r"\[\d+:a|\b(?:a?movie|amix|amerge|join|anullsrc|sine|aevalsrc|asplit|anoisesrc)\b")
 
 
 class RenderError(RuntimeError):
@@ -149,18 +153,22 @@ def build_ffmpeg_args(
 
 
 def maps_only_source_audio(args: Sequence[str]) -> bool:
-    """Invariant 10: one input, every audio map is from input 0, and nothing generates or mixes in other audio."""
-    inputs = sum(1 for a in args if a == "-i")
+    """Invariant 10: the only audio that can reach the output is input 0's own audio track.
+
+    True only when: exactly one `-i`; at least one audio map and every audio map starts with `0:a`; every other map
+    is the `[v]` video label or `0:v…`; no filter (`-filter_complex`/`-lavfi`/`-vf`/`-af`) reads an audio pad or
+    generates/mixes audio; no filter scripts or input looping (which could hide either).
+    """
+    if any(a in _FORBIDDEN_FLAGS for a in args):
+        return False
+    if sum(1 for a in args if a == "-i") != 1:
+        return False
     maps = [args[i + 1] for i, a in enumerate(args[:-1]) if a == "-map"]
-    audio_maps = [m for m in maps if ":a" in m]
-    non_video_labels = [m for m in maps if m.startswith("[") and m != "[v]"]
-    mixed = any(mixer in a for a in args for mixer in _AUDIO_MIXERS)
-    return (
-        inputs == 1
-        and bool(audio_maps)
-        and all(m.startswith("0:a") for m in audio_maps)
-        and not (non_video_labels or mixed)
-    )
+    audio_maps = [m for m in maps if m.startswith("0:a")]
+    if not audio_maps or any(m not in ("[v]",) and not m.startswith(("0:a", "0:v")) for m in maps):
+        return False
+    filters = [args[i + 1] for i, a in enumerate(args[:-1]) if a in _FILTER_FLAGS]
+    return not any(_AUDIO_FILTER_RE.search(f) for f in filters)
 
 
 def sha256_file(path: Path | str) -> str:

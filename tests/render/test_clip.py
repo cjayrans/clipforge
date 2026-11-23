@@ -141,6 +141,48 @@ def test_unknown_account_set_refused(tmp_path: Path, app_config: AppConfig) -> N
         Fakes().render(request(tmp_path, account_set="nope"), app_config)
 
 
+def test_blank_ad_label_text_refused(tmp_path: Path, app_config: AppConfig) -> None:
+    """Invariant 3: a label that would render invisibly must never be recorded as has_ad_label=True."""
+    data = app_config.model_dump(by_alias=True)
+    data["render"]["ad_label_text"] = "   "
+    cfg = AppConfig.model_validate(data)
+    fakes = Fakes()
+    with pytest.raises(RenderError, match="ad_label_text is blank"):
+        fakes.render(request(tmp_path), cfg)
+    assert fakes.args is None
+    assert not (tmp_path / "out" / "clip_7.manifest.json").exists()
+
+
+def test_extra_audio_input_refused_before_encoding(
+    tmp_path: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invariant 10: if the args ever carried another audio source, render stops before ffmpeg runs."""
+    import clipforge.render.clip as clip_mod
+
+    real = clip_mod.build_ffmpeg_args
+
+    def with_music(*a: Any, **kw: Any) -> list[str]:
+        args = real(*a, **kw)
+        return [*args[:-1], "-i", "music.mp3", "-map", "1:a:0", args[-1]]
+
+    monkeypatch.setattr(clip_mod, "build_ffmpeg_args", with_music)
+    fakes = Fakes()
+    with pytest.raises(RenderError, match="invariant 10"):
+        fakes.render(request(tmp_path), app_config)
+    assert fakes.args is None
+    assert not (tmp_path / "out" / "clip_7.manifest.json").exists()
+
+
+def test_manifest_flags_come_from_the_written_ass(tmp_path: Path, app_config: AppConfig) -> None:
+    m = Fakes().render(request(tmp_path, hook=",AdLabel,, trick"), app_config)
+    doc = (tmp_path / "out" / "clip_7.ass").read_text().splitlines()
+    ad_lines = [line for line in doc if line.startswith("Dialogue:") and line.split(",", 4)[3] == "AdLabel"]
+    assert len(ad_lines) == 1
+    assert ad_lines[0].startswith("Dialogue: 10,0:00:00.00,0:00:03.00,AdLabel,,")
+    assert ad_lines[0].endswith("}Ad")
+    assert m.has_ad_label
+
+
 def test_unbundled_font_refused(tmp_path: Path, app_config: AppConfig) -> None:
     data = app_config.model_dump(by_alias=True)
     data["styles"]["bold-yellow"]["font"] = "Nope-Regular"
@@ -163,3 +205,35 @@ def test_real_render_of_fixture(tmp_path: Path, app_config: AppConfig, kind: str
     assert out.audio_codec == "aac"
     assert out.audio_streams == 1
     assert out.duration_s == pytest.approx(12.0, abs=0.15)
+
+
+def _gray_region(clip: str, t: float, x: int, y: int, w: int, h: int) -> bytes:
+    import subprocess
+
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{t}", "-i", clip, "-frames:v", "1",
+           "-vf", f"crop={w}:{h}:{x}:{y},format=gray", "-f", "rawvideo", "-"]  # fmt: skip
+    out = subprocess.run(cmd, check=True, capture_output=True).stdout
+    assert len(out) == w * h
+    return out
+
+
+def _mean_abs_diff(a: bytes, b: bytes) -> float:
+    return sum(abs(p - q) for p, q in zip(a, b, strict=True)) / len(a)
+
+
+@needs_ffmpeg
+def test_ad_label_pixels_visible_then_gone(tmp_path: Path, app_config: AppConfig) -> None:
+    """Invariant 3 on real pixels: the top-left label region changes when the label ends at 3 s; a control region
+    on the top-right (no overlay) does not."""
+    req = request(tmp_path, start_s=40.0, end_s=52.0, content_kind="game", hook="", words=[])
+    m = render_candidate(req, app_config)
+    label_box = (40, 95, 160, 70)  # around \pos(48,120), 48 px "Ad" in a padded box
+    control = (840, 95, 160, 70)
+    at_1 = _gray_region(m.clip_path, 1.0, *label_box)
+    at_4 = _gray_region(m.clip_path, 4.0, *label_box)
+    ctrl_1 = _gray_region(m.clip_path, 1.0, *control)
+    ctrl_4 = _gray_region(m.clip_path, 4.0, *control)
+    label_change = _mean_abs_diff(at_1, at_4)
+    control_change = _mean_abs_diff(ctrl_1, ctrl_4)
+    assert label_change > control_change + 8, (label_change, control_change)
+    assert sum(1 for p in at_1 if p > 200) > sum(1 for p in at_4 if p > 200)  # white "Ad" text present at 1 s

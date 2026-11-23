@@ -16,7 +16,7 @@ from typing import Literal
 from clipforge import compliance
 from clipforge.config import AppConfig
 from clipforge.qa.probe import ProbeResult, probe
-from clipforge.render.ass import ass_document
+from clipforge.render.ass import ass_document, escape_text
 from clipforge.render.assets import fonts_dir, missing_fonts
 from clipforge.render.captions import build_captions
 from clipforge.render.encode import (
@@ -105,10 +105,15 @@ def render_candidate(
             plan = plan_crops(shots, src.width, src.height, "talk", detector)
 
     caption_style, caption_evts = build_captions(req.words, req.start_s, req.end_s, style)
+    if not escape_text(app.render.ad_label_text):
+        raise RenderError("render.ad_label_text is blank; the 'Ad' label must be visible (invariant 3)")
     overlay_evts = overlay_events(req.hook, app.render)
     ad = next(e for e in overlay_evts if e.style == AD_LABEL_STYLE)
     hook = next((e for e in overlay_evts if e.style == HOOK_STYLE), None)
     doc = ass_document([caption_style, *overlay_styles(style)], [*caption_evts, *overlay_evts])
+    # Invariant 3: claim the label only if its exact Dialogue line and its style are in the file libass will burn.
+    doc_lines = doc.splitlines()
+    has_ad_label = ad.line() in doc_lines and any(line.startswith(f"Style: {AD_LABEL_STYLE},") for line in doc_lines)
 
     req.out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"clip_{req.candidate_id}"
@@ -125,7 +130,7 @@ def render_candidate(
         height=app.render.height,
         fps=float(app.render.fps),
         duration_s=duration,
-        has_ad_label=f",{AD_LABEL_STYLE},," in doc,
+        has_ad_label=has_ad_label,
         ad_label_start_s=ad.start_s,
         ad_label_end_s=ad.end_s,
         hook_text=req.hook.strip(),
@@ -143,7 +148,7 @@ def render_candidate(
         settings=EncodeSettings.from_config(app.render),
     )
     audio_only = maps_only_source_audio(args)
-    if not audio_only:  # pragma: no cover - guaranteed by build_ffmpeg_args
+    if not audio_only:
         raise RenderError("encoder would map audio other than the source track (invariant 10)")
 
     log.info("rendering candidate %s (%.1fs, %d shots)", req.candidate_id, duration, len(plan.shots))
@@ -151,7 +156,11 @@ def render_candidate(
 
     out = probe_fn(clip_path)
     manifest = planned.model_copy(
-        update={"duration_s": round(out.duration_s, 3), "sha256": sha256_file(clip_path), "audio_source_only": True}
+        update={
+            "duration_s": round(out.duration_s, 3),
+            "sha256": sha256_file(clip_path),
+            "audio_source_only": audio_only,
+        }
     )
     compliance.assert_render_manifest(manifest)
     clip_path.with_suffix(".manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")

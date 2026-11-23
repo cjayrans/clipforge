@@ -167,3 +167,18 @@ def test_qa_clip_probe_error_fails(tmp_path: Path) -> None:
 def test_qa_clip_missing_file_fails(tmp_path: Path) -> None:
     r = qa_clip(manifest(clip_path=str(tmp_path / "nope.mp4")), campaign(), PLATFORMS, captions())
     assert failed(r) == {"file"}
+
+
+def test_required_tags_checked() -> None:
+    assert caption_check(Platform.TIKTOK, "#ad big win #GTA6", ["#gta6"]).passed
+    missing = caption_check(Platform.TIKTOK, "#ad big win #GTA6s", ["#GTA6", "@rockstar"])
+    assert not missing.passed
+    assert "#GTA6, @rockstar" in missing.detail
+
+
+def test_run_qa_uses_campaign_required_tags() -> None:
+    camp = campaign(allowed_platforms=list(Platform), required_tags=["#DylanPage"])
+    good = report(camp=camp)  # captions built with normalize_caption, which appends the tag
+    assert good.passed
+    bad = report(camp=camp, caps=dict.fromkeys(PLATFORMS, "#ad no tag here"))
+    assert failed(bad) == {"caption:tiktok", "caption:instagram"}

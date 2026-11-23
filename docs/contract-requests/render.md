@@ -24,6 +24,13 @@ If Phase 2 prefers configuration to discovery, add `CLIPFORGE_ASSETS_DIR` to `co
 `assets`) and pass it to `render.assets`. Not needed for v1; the discovery above works in the repo, in CI and in
 `/app`.
 
+## 2b. config: reject a blank "Ad" label text (invariant 3 hardening)
+
+`RenderConfig.ad_label_text` only requires `min_length=1`, so `"   "` passes validation and would render an
+invisible label. Render now refuses it (`RenderError`, tested in `tests/render/test_clip.py`). Config should also
+reject it at load time: strip whitespace and require non-blank text. Ideally it should require exactly `"Ad"`,
+unless Carson wants localised labels.
+
 ## 3. What the pipeline must pass to render (no schema change)
 
 `clipforge.render.clip.render_candidate(ClipRequest, AppConfig)` needs:

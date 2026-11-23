@@ -8,11 +8,13 @@ Checks (one `QACheck` each, all run so the report lists every problem):
 - `resolution` 1080×1920, `fps` (config fps ± 0.01), `video_codec` h264, `audio` (exactly one AAC stream).
 - `manifest`: `compliance.render_manifest_problems` ("Ad" label 0.0 → ≥3.0 s, source audio only, size, length).
 - `campaign_active`, and per platform `platform:<p>` via `compliance.assert_platform_allowed` (PRD F15, invariant 9).
-- per platform `caption:<p>`: present, starts with "#ad ", within the platform limit, no URLs on X (invariants 2, 9).
+- per platform `caption:<p>`: present, starts with "#ad ", every campaign `required_tags` present, within the
+  platform limit, no URLs on X (invariants 2, 9).
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 
@@ -91,7 +93,12 @@ def platform_check(campaign: Campaign, platform: Platform, enabled: Iterable[Pla
     return _check(f"platform:{platform.value}", [])
 
 
-def caption_check(platform: Platform, caption: str | None) -> QACheck:
+def has_tag(text: str, tag: str) -> bool:
+    """Same rule as `compliance.normalize_caption`: whole tag, case-insensitive, not part of a longer tag."""
+    return re.search(rf"(?<![\w#]){re.escape(tag)}(?![\w])", text, re.IGNORECASE) is not None
+
+
+def caption_check(platform: Platform, caption: str | None, required_tags: Iterable[str] = ()) -> QACheck:
     name = f"caption:{platform.value}"
     if caption is None:
         return _check(name, ["no caption for this platform"])
@@ -100,6 +107,9 @@ def caption_check(platform: Platform, caption: str | None) -> QACheck:
         problems.append("caption does not start with '#ad '")
     if not caption[len(compliance.AD_PREFIX) :].strip():
         problems.append("caption has nothing after '#ad'")
+    missing = [t.strip() for t in required_tags if t.strip() and not has_tag(caption, t.strip())]
+    if missing:
+        problems.append(f"missing required tags: {', '.join(missing)}")
     length, limit = compliance.caption_length(caption, platform), compliance.CAPTION_LIMITS[platform]
     if length > limit:
         problems.append(f"caption is {length} long, {platform.value} limit is {limit}")
@@ -136,7 +146,7 @@ def run_qa(
         checks.append(_check("platforms", ["no target platforms"]))
     for platform in platforms:
         checks.append(platform_check(campaign, platform, enabled_list))
-        checks.append(caption_check(platform, captions.get(platform)))
+        checks.append(caption_check(platform, captions.get(platform), campaign.required_tags))
     return QAReport(clip_path=manifest.clip_path, checks=checks)
 
 
