@@ -36,5 +36,7 @@ def preview_for_telegram(clip: Path, limit_bytes: int = TELEGRAM_VIDEO_LIMIT_BYT
     if not out.is_file() or out.stat().st_mtime < clip.stat().st_mtime:
         run(proxy_args(clip, out))
     if out.stat().st_size > limit_bytes:
-        raise RenderError(f"preview proxy is still over {limit_bytes} bytes: {out}")
+        raise RenderError(
+            f"preview proxy is {out.stat().st_size} bytes, still over the {limit_bytes} byte limit: {out}"
+        )
     return out
