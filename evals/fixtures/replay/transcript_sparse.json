@@ -1,0 +1,6 @@
+{
+  "source_id": 2,
+  "note": "Canned Haiku answers for offline (replay) evals. Sparse footage scores low everywhere.",
+  "default": {"score": 12, "standalone": false, "brief_ok": true, "hook_potential": 1, "reasons": "replay: mostly silence"},
+  "spans": []
+}

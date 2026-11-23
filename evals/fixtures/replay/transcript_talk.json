@@ -1,0 +1,11 @@
+{
+  "source_id": 1,
+  "note": "Canned Haiku answers for offline (replay) evals. A window gets the item of the span it overlaps most (IoU >= 0.3), else `default`.",
+  "default": {"score": 30, "standalone": false, "brief_ok": true, "hook_potential": 3, "reasons": "replay default: no strong payoff"},
+  "spans": [
+    {"start_s": 31.8, "end_s": 50.8, "score": 88, "standalone": true, "brief_ok": true, "hook_potential": 9, "reasons": "replay: helicopter jump with a big payoff"},
+    {"start_s": 57.8, "end_s": 76.4, "score": 82, "standalone": true, "brief_ok": true, "hook_potential": 8, "reasons": "replay: billboard crash, chat paid for it"},
+    {"start_s": 6.2, "end_s": 31.4, "score": 55, "standalone": true, "brief_ok": true, "hook_potential": 6, "reasons": "replay: alarm and escape plan"},
+    {"start_s": 76.8, "end_s": 89.6, "score": 20, "standalone": false, "brief_ok": true, "hook_potential": 2, "reasons": "replay: wrap-up"}
+  ]
+}
