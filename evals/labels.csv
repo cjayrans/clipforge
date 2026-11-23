@@ -1,0 +1,5 @@
+transcript,start_s,end_s,label,note
+transcript_talk,31.8,50.8,good,SEED placeholder (written by Claude Code from the fixture text): helicopter jump and "clip that" payoff; replace with Carson's labels
+transcript_talk,57.8,76.4,good,SEED placeholder: billboard crash and chat paid for it
+transcript_talk,76.8,89.6,bad,SEED placeholder: wrap-up with no payoff
+transcript_sparse,4.0,33.5,bad,SEED placeholder: near-silent footage (below the 20 wpm no-speech guard)
