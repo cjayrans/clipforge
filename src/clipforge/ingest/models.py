@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from clipforge.db import CampaignRow, SourceRow, record_event
 from clipforge.db.transitions import Actor
+from clipforge.ingest.alerts import redact_urls
 from clipforge.schemas import Campaign, CampaignIn, Source, SourceStatus
 
 # CampaignIn field -> CampaignRow column, where they differ.
@@ -44,7 +45,8 @@ def set_source_status(
 ) -> None:
     """Change a source's status and write an `events` row (the audit log).
 
-    `fail_reason` is set with FAILED, kept on PURGED, and cleared otherwise.
+    `fail_reason` is set with FAILED, kept on PURGED, and cleared otherwise. URL query strings are dropped from
+    `detail`.
     """
     old = source.status
     source.status = status
@@ -60,6 +62,6 @@ def set_source_status(
         old.value if old is not None else None,
         status.value,
         actor=actor,
-        detail=detail or (fail_reason or ""),
+        detail=redact_urls(detail or (fail_reason or "")),
     )
     session.flush()

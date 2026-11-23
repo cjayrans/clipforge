@@ -172,6 +172,16 @@ def test_redirect_to_youtube_refused(session: Session, settings: Settings, facto
     assert src.fail_reason == "host_refused"
 
 
+def test_event_details_drop_url_query_strings(session: Session, settings: Settings, factory: Factory) -> None:
+    c = factory.campaign()
+    src = factory.source(c, url="https://www.youtube.com/watch?v=SIGNEDTOKEN")
+    with pytest.raises(ComplianceError):
+        download_source(session, settings, src, runner=probe_runner())
+    details = [e.detail for e in session.scalars(select(EventRow))]
+    assert details
+    assert not any("SIGNEDTOKEN" in d for d in details)
+
+
 @pytest.mark.parametrize(
     "target",
     [

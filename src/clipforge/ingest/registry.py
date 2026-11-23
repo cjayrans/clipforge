@@ -332,7 +332,8 @@ def register_source(
         None,
         row.status.value,
         actor="operator",
-        detail=f"registered on campaign {campaign.id}" + (f" from folder {folder_url}" if folder_url else ""),
+        detail=f"registered on campaign {campaign.id}"
+        + (f" from folder {alerts.redact_urls(folder_url)}" if folder_url else ""),
     )
     return row, True
 
