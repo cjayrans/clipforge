@@ -16,6 +16,7 @@ from clipforge import cli
 from tests.track.test_reconcile import CSV_FIELDS, read_rows, write_rows
 
 OPS_TARGETS = {
+    "worker": "clipforge.scheduler.worker.run_worker",
     "bot": "clipforge.review.bot.run_bot",
     "report weekly": "clipforge.track.reports.weekly_report",
     "export-reconcile": "clipforge.track.reconcile.export_csv",

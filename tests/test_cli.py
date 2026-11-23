@@ -50,7 +50,6 @@ def test_help_lists_every_command() -> None:
         (["campaign", "end", "1"], "Phase 1 A"),
         (["campaign", "check", "1"], "Phase 1 A"),
         (["source", "add", "1", "https://cdn.example.com/a.mp4"], "Phase 1 A"),
-        (["worker"], "Phase 1 D"),
         (["run", "--once"], "Phase 2"),
     ],
 )
