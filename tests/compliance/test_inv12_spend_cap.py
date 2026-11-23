@@ -5,13 +5,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+import respx
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, sessionmaker
 
 from clipforge import costs
 from clipforge.config import AppConfig, Settings
-from clipforge.db import EventRow, make_engine, make_session_factory
+from clipforge.db import ClipRow, CostRow, EventRow, make_engine, make_session_factory, session_scope
 from clipforge.db.migrate import upgrade
+from clipforge.pipeline import PipelineDeps, run_once
+from clipforge.schemas import ClipState
+from tests.rank.anthropic_mock import FakeAnthropic
+from tests.support.pipeline_fixtures import add_campaign
 
 NOW = datetime(2026, 11, 22, 18, 0, tzinfo=UTC)
 
@@ -47,8 +52,6 @@ def test_resume_does_not_bypass_cap(app_config: AppConfig, session: Session) -> 
 
 def test_pipeline_pauses_at_cap(settings: Settings) -> None:
     """At the cap, the nightly run pauses before any paid stage and records the pause once (the bot delivers it)."""
-    from clipforge.pipeline import run_once
-
     # Phase 2: the session must use the database run_once opens (the generic `session` fixture is a separate file).
     upgrade(settings.database_url)
     engine = make_engine(settings.database_url)
@@ -65,3 +68,43 @@ def test_pipeline_pauses_at_cap(settings: Settings) -> None:
     finally:
         session.close()
         engine.dispose()
+
+
+def test_new_hook_spends_nothing_while_paused(
+    pipe_settings: Settings,
+    db: sessionmaker[Session],
+    deps: PipelineDeps,
+    anthropic: FakeAnthropic,
+    mocked_http: respx.MockRouter,
+) -> None:
+    """Phase 2 review: the bot's New hook (a paid Sonnet call) is blocked by the pause like every other paid call.
+    The clip returns to review with a newer render time, so the approval given before the tap no longer counts."""
+    from clipforge.compliance import ComplianceError, assert_human_approved
+    from clipforge.pipeline import begin_rerender, finish_rerender
+    from clipforge.publish.queries import approvals_for
+    from clipforge.review.service import approve_clip, render_stamp
+
+    add_campaign(db, pipe_settings)
+    assert run_once(pipe_settings, deps=deps).ready >= 1
+    approved_at = datetime(2026, 11, 24, 0, 50, tzinfo=UTC)
+    with session_scope(db) as s:
+        clip = s.scalars(select(ClipRow).where(ClipRow.state == ClipState.PENDING_REVIEW)).first()
+        assert clip is not None
+        clip_id = clip.id
+        approve_clip(s, clip_id, stamp=render_stamp(clip.rendered_at), now=approved_at)
+        costs.pause(s, "monthly cap")
+        cost_rows = s.scalar(select(func.count()).select_from(CostRow))
+    requests = len(anthropic.requests)
+
+    job = begin_rerender(pipe_settings, db, clip_id, "new_hook", approved_at)
+    message = finish_rerender(pipe_settings, db, job, deps)
+
+    assert "failed" in message
+    assert len(anthropic.requests) == requests
+    with session_scope(db) as s:
+        assert s.scalar(select(func.count()).select_from(CostRow)) == cost_rows
+        clip = s.get(ClipRow, clip_id)
+        assert clip is not None
+        assert clip.state is ClipState.PENDING_REVIEW
+        with pytest.raises(ComplianceError):
+            assert_human_approved(approvals_for(s, clip_id), clip.rendered_at)

@@ -116,6 +116,9 @@ def _transcribe_chunks(
     alerts.alert_operator(
         session, alerts.TRANSCRIBE_FALLBACK, source.id, f"Groq failed ({last_error}); transcribing locally (slow)"
     )
+    # Commit the alert now: the local transcription can take an hour on CPU, and an open write transaction would block
+    # the bot's writes (approvals) on the shared SQLite file for all of that time.
+    session.commit()
     try:
         local_results: list[ChunkResult] = []
         local_language: str | None = None

@@ -215,3 +215,17 @@ async def test_hook_runner_answers_at_once_and_finishes_in_the_background(
     assert _clip(db, reviewed).state is ClipState.PENDING_REVIEW
     assert reviewed not in runner.busy
     assert "no longer exists" in await runner.shorter(999_999)
+
+
+def test_clip_with_posts_cannot_be_re_rendered(
+    pipe_settings: Settings, db: sessionmaker[Session], reviewed: int
+) -> None:
+    """Reviewer hardening: a clip that already has a post row is never re-rendered (its old file may be live)."""
+    from tests.support.factories import Factory
+
+    with session_scope(db) as s:
+        clip = s.get(ClipRow, reviewed)
+        assert clip is not None
+        Factory(s).post(clip)
+    with pytest.raises(RerenderRefused, match="already has posts"):
+        begin_rerender(pipe_settings, db, reviewed, "new_hook", APPROVE_AT)

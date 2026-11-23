@@ -56,6 +56,7 @@ from clipforge.db import (
     CandidateRow,
     ClipRow,
     FlagRow,
+    PostRow,
     SourceRow,
     TranscriptRow,
     make_engine,
@@ -336,7 +337,10 @@ def _make_proxy(settings: Settings, deps: PipelineDeps, session: Session, clip_i
         deps.preview_fn(Path(path))
     except (RenderError, media.MediaToolError, OSError) as exc:
         alerts.raise_alert(
-            session, alerts.PREVIEW_TOO_BIG, clip_id, f"clip {clip_id}: could not build a preview proxy: {exc}"
+            session,
+            alerts.PREVIEW_TOO_BIG,
+            clip_id,
+            _redact(settings, f"clip {clip_id}: could not build a preview proxy: {exc}"),
         )
 
 
@@ -556,7 +560,9 @@ class Pipeline:
             result = rank_source(transcript, campaign, account.platforms, client=self._claude, fewshots=fewshots)
         except (RankError, PromptError, ComplianceError) as exc:
             with session_scope(self.factory) as s:
-                alerts.raise_alert(s, alerts.RANK_EMPTY, source_id, f"ranking source {source_id} failed: {exc}")
+                alerts.raise_alert(
+                    s, alerts.RANK_EMPTY, source_id, _redact(self.settings, f"ranking source {source_id} failed: {exc}")
+                )
             raise _StageFailed(f"rank: {exc}") from exc
         with session_scope(self.factory) as s:
             src = s.get(SourceRow, source_id)
@@ -759,6 +765,8 @@ def begin_rerender(
             raise RerenderRefused(f"Clip {clip_id} is already being re-rendered; wait for the new preview.")
         if clip.state not in REVIEWABLE:
             raise RerenderRefused(f"Clip {clip_id} is {clip.state.value}; it can no longer be changed.")
+        if s.scalar(select(PostRow.id).where(PostRow.clip_id == clip_id).limit(1)) is not None:
+            raise RerenderRefused(f"Clip {clip_id} already has posts; it can no longer be changed.")
         lin = lineage(s, clip)
         campaign = campaign_model(lin.campaign)
         if campaign.status is not CampaignStatus.ACTIVE:
@@ -844,8 +852,8 @@ def finish_rerender(
         what = job.kind.replace("_", " ")
         return f"Clip {job.clip_id}: {what} failed ({reason}). The previous version is back for review."
 
-    now = deps.clock()
     with session_scope(factory) as s:
+        now = deps.clock()  # taken inside the transaction that swaps the file (reviewer hardening)
         clip = s.get(ClipRow, job.clip_id)
         cand = s.get(CandidateRow, job.inputs.candidate_id)
         assert clip is not None
@@ -884,8 +892,8 @@ def restore_after_failed_rerender(
 ) -> None:
     """Return a clip stuck in RENDERED to review with its existing file: QA it again and set `rendered_at = now`, so
     any approval needs a fresh tap on the re-sent preview (COMPLIANCE #5). QA_FAILED if the old file fails QA."""
-    now = deps.clock()
     with session_scope(factory) as s:
+        now = deps.clock()
         clip = s.get(ClipRow, clip_id)
         flag = s.get(FlagRow, f"{RERENDER_FLAG}{clip_id}")
         if flag is not None:

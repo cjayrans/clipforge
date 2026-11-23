@@ -203,6 +203,39 @@ skips on the Mac and runs in CI and Docker.
 - Nothing else external changed. Groq, Anthropic and Upload-Post field names are as verified in the Phase 1 PRs; no
   new endpoint or field is used.
 
+## Two bugs found by running in the real image (fixed here)
+
+Both were invisible on CI's Ubuntu runner and the Mac, and would have broken the first real night.
+
+1. **No clip could render in the Docker image.**
+   - Debian bookworm's ffmpeg 5.1 failed every encode with "Cannot select channel layout for the link between filters
+     Parsed_aresample_1 and format_out" on the `loudnorm` output.
+   - Phase 1's real-render tests passed only on Ubuntu's newer ffmpeg.
+   - Fix: `aformat=sample_fmts=fltp:channel_layouts=mono|stereo` at the end of the `-af` chain
+     (`render/encode.py`). Still only the source audio is mapped (invariant 10).
+2. **First start on a new database could crash one service.**
+   - The worker and the bot opening a new database at the same moment: one got "database is locked" on
+     `PRAGMA journal_mode=WAL`.
+   - Fix: retry for up to 15 s (`db/session.py`), then fall back to the rollback journal with a warning.
+
 ## Verification
 
-Filled in from the actual runs below.
+- **`make lint test`** on the Mac: 1054 passed, 11 skipped. The skips are ffmpeg/ffprobe/mediapipe tests that cannot
+  run there. `make typecheck` (mypy --strict on schemas.py and compliance.py): clean.
+- **Full suite inside the production image** (repo mounted read-only, dev deps in a throwaway venv): 1062 passed,
+  1 skipped. The skip is the "faster-whisper not installed" case, which doesn't apply there.
+  - Passed: the real-render end-to-end test, `test_real_render_of_fixture[game|talk]` and the Ad-label pixel test
+    (mean grey diff 49.0 at 0.5 s, 49.1 at 2.5 s, 0.0002 at 4.0 s).
+- **`make up`:**
+  - Both services `healthy`, 0 restarts.
+  - Worker and bot both logged `publish mode dry_run`.
+  - The live DB reports `journal_mode=wal`.
+  - WAL race check on the bind mount, on a throwaway file `data/wal-check.db` (deleted afterwards): worker and bot
+    wrote 200 rows each at the same time, 3 rounds, both in WAL, 400 rows, `integrity_check` ok.
+- **Make targets:** `make status`, `costs`, `backup`, `weekly-report`, `export-reconcile` and `import-reconcile`
+  (of the unchanged export, idempotent) all exit 0. `resume` printed "pipeline was not paused". `logs` showed no
+  errors.
+  - The live database was empty (no campaigns, $0.00 spent), so nothing paid ran.
+  - `make down` afterwards, as agreed.
+- **Docker CLI:** Docker Desktop's CLI is not on your shell PATH (`/Applications/Docker.app/Contents/Resources/bin`).
+  `make up` needs it there; Docker Desktop's "install CLI tools" setting or a PATH line fixes it.

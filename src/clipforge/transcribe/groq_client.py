@@ -163,13 +163,20 @@ class GroqTranscriber:
         except groq.APIError as exc:
             # Never include request details: the SDK error text has no key, but keep it short anyway.
             raise TranscriberError(f"Groq transcription failed: {type(exc).__name__}: {str(exc)[:200]}") from exc
-        out = parse_verbose_json(data)
+        # Record the spend as soon as Groq answered: the request is billed even if its body fails to parse below,
+        # and an unrecorded billed call would let the next retry spend past the cap (COMPLIANCE #12).
         billed = max(MIN_BILLED_S, duration_s)
         if self.ledger is not None:
             with session_scope(self.ledger) as s:
                 row = costs.record(s, self.settings.app, SERVICE, self.model, billed, "audio_seconds")
         else:
             row = costs.record(self.session, self.settings.app, SERVICE, self.model, billed, "audio_seconds")
+        try:
+            out = parse_verbose_json(data)
+        except TranscriberError:
+            raise
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise TranscriberError(f"Groq response could not be parsed: {type(exc).__name__}: {exc}") from exc
         out.cost_usd = row.usd
         log.info("groq transcribed %s (%.0f s billed, $%.4f)", path.name, billed, row.usd)
         return out

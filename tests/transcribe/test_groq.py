@@ -294,3 +294,25 @@ def test_language_comes_from_config(
     # An explicit argument still wins (None = let the model detect the language).
     GroqTranscriber(session, s2, language=None).transcribe_chunk(chunk_file, 60.0)
     assert b'name="language"' not in route.calls.last.request.content
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"text": "hello", "x_groq": {"id": "x"}},  # no word timestamps
+        {"text": "hello", "words": [{"word": "hi", "end": 1.0}], "x_groq": {"id": "x"}},  # a word without start
+    ],
+)
+def test_billed_response_that_fails_to_parse_is_still_recorded(
+    engine: Engine, session: Session, keyed_settings: Settings, chunk_file: Path, body: dict[str, object]
+) -> None:
+    """COMPLIANCE #12 (Phase 2 review): a 200 is billed even when its body is unusable; the cost row must exist so the
+    retry that follows can't spend past the cap unnoticed."""
+    respx.post(GROQ_URL).mock(return_value=httpx.Response(200, json=body))
+    ledger = make_session_factory(engine)
+    with pytest.raises(TranscriberError):
+        GroqTranscriber(session, keyed_settings, ledger=ledger).transcribe_chunk(chunk_file, 60.0)
+    session.rollback()
+    with ledger() as s:
+        assert [r.units for r in s.scalars(select(CostRow))] == [60.0]
