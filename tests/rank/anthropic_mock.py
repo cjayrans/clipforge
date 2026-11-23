@@ -62,8 +62,9 @@ def error(status: int, kind: str = "api_error", msg: str = "boom") -> httpx2.Res
 class FakeAnthropic:
     """Answers each request with the next queued response (or a function of the request body)."""
 
-    def __init__(self, *responses: httpx2.Response | Responder) -> None:
+    def __init__(self, *responses: httpx2.Response | Responder, default: Responder | None = None) -> None:
         self.queue: list[httpx2.Response | Responder] = list(responses)
+        self.default = default
         self.requests: list[dict[str, Any]] = []
         self.headers: list[dict[str, str]] = []
         self.paths: list[str] = []
@@ -76,6 +77,8 @@ class FakeAnthropic:
         self.requests.append(body)
         self.headers.append(dict(request.headers))
         self.paths.append(request.url.path)
+        if not self.queue and self.default is not None:
+            return self.default(body)
         if not self.queue:
             raise AssertionError(f"unexpected Anthropic request #{len(self.requests)}")
         nxt = self.queue.pop(0)
