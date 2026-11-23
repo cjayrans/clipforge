@@ -69,7 +69,9 @@ here (`make lint test`: 370 passed, 8 skipped, 19 xfailed). They run in CI (ffmp
   ffprobe.
 - `test_ad_label_pixels_visible_then_gone`: compares the clip with a baseline encode of the same window that has no ASS
   file. The label box must differ at 0.5 s and 2.5 s (mean grey diff > 15) and match at 4 s (< 4). The thresholds were
-  first guesses and passed unchanged. The test prints the measured diffs, so the margin shows in the CI log.
+  first guesses and passed unchanged. Measured on CI (run `45094004961`): 49.03 at 0.5 s, 49.30 at 2.5 s and 0.00009
+  at 4.0 s, so about 3× margin over the 15 threshold and a near-zero diff once the label ends. The test prints these
+  diffs, so drift shows in the CI log.
 - `test_real_proxy_from_fixture`, `test_probe_fixture`, `test_bench_smoke`.
 - `test_faceless_fixture_defaults_to_fit_blur`: real MediaPipe on the face-less fixture.
 
