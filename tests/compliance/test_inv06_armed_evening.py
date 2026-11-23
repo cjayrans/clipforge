@@ -12,7 +12,6 @@ from clipforge.compliance import ComplianceError, assert_evening_armed
 from clipforge.config import Settings
 from clipforge.db import PostRow, transition
 from clipforge.schemas import ClipState, Evening
-from tests.compliance._helpers import xfail_until
 from tests.support.factories import Factory
 
 ARMED_AT = datetime(2026, 11, 24, 1, 0, tzinfo=UTC)
@@ -28,7 +27,6 @@ def test_unarmed_evening_publishes_nothing() -> None:
     assert_evening_armed(Evening(date=date(2026, 11, 23), armed_at=ARMED_AT))
 
 
-@xfail_until("Phase 1 D: clipforge.publish.dispatcher.dispatch_due_slots")
 def test_dispatcher_unarmed_evening(factory: Factory, session: Session, settings: Settings) -> None:
     from clipforge.publish.dispatcher import dispatch_due_slots  # type: ignore[attr-defined]
 

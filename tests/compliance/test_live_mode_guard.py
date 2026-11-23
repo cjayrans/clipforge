@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.compliance._helpers import xfail_until
 from tests.support.guards import LivePublishModeError, refuse_live_publish_mode
 
 REPO = Path(__file__).resolve().parents[2]
@@ -45,7 +44,6 @@ def test_pytest_session_refuses_live_mode() -> None:
     assert "passed" not in proc.stdout
 
 
-@xfail_until("Phase 1 D: clipforge.review.bot.is_owner_chat")
 def test_bot_ignores_other_chats() -> None:
     from clipforge.review.bot import is_owner_chat  # type: ignore[attr-defined]
 

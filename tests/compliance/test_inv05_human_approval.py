@@ -12,7 +12,6 @@ from clipforge.compliance import ComplianceError, assert_human_approved
 from clipforge.config import Settings
 from clipforge.db import ClipRow, IllegalTransition, PostRow, transition
 from clipforge.schemas import Approval, ApprovalDecision, ClipState, RejectReason
-from tests.compliance._helpers import xfail_until
 from tests.support.factories import Factory
 
 RENDERED = datetime(2026, 11, 23, 6, 0, tzinfo=UTC)
@@ -60,7 +59,6 @@ def test_clip_cannot_be_scheduled_without_approval_state(factory: Factory, sessi
         transition(session, clip, ClipState.SCHEDULED)
 
 
-@xfail_until("Phase 1 D: clipforge.publish.dispatcher.dispatch_due_slots")
 def test_dispatcher_skips_stale_approval(factory: Factory, session: Session, settings: Settings) -> None:
     from clipforge.publish.dispatcher import dispatch_due_slots  # type: ignore[attr-defined]
 

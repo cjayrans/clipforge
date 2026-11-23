@@ -9,7 +9,7 @@ import pytest
 
 from clipforge.config import AppConfig
 from clipforge.schemas import Platform, PublishMode, PublishRequest
-from tests.compliance._helpers import campaign, xfail_until
+from tests.compliance._helpers import campaign
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -44,7 +44,6 @@ def _truthy(v: object) -> bool:
     return str(v).lower() == "true"
 
 
-@xfail_until("Phase 1 D: clipforge.publish.upload_post.build_payload")
 @pytest.mark.parametrize("platform", list(Platform))
 def test_disclosure_flags_per_platform(platform: Platform, app_config: AppConfig) -> None:
     from clipforge.publish.upload_post import build_payload  # type: ignore[attr-defined]

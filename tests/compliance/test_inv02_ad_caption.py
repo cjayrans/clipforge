@@ -11,7 +11,7 @@ from hypothesis import strategies as st
 from clipforge.compliance import AD_PREFIX, CAPTION_LIMITS, ComplianceError, caption_length, normalize_caption
 from clipforge.config import AppConfig
 from clipforge.schemas import Platform, PublishMode, PublishRequest
-from tests.compliance._helpers import campaign, xfail_until
+from tests.compliance._helpers import campaign
 
 RAW_CAPTIONS = [
     "This heist went sideways fast",
@@ -76,7 +76,6 @@ def test_caption_property(raw: str, platform: Platform) -> None:
     assert caption_length(out, platform) <= CAPTION_LIMITS[platform]
 
 
-@xfail_until("Phase 1 D: clipforge.publish.upload_post.build_payload")
 @pytest.mark.parametrize("platform", list(Platform))
 def test_upload_payload_caption_starts_with_ad(platform: Platform, app_config: AppConfig) -> None:
     from clipforge.publish.upload_post import build_payload  # type: ignore[attr-defined]
