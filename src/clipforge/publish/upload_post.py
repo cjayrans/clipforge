@@ -25,10 +25,15 @@ unconfirmed; none of the summary-only items is load-bearing for a compliance rul
   https://docs.upload-post.com/guides/paid-partnership
 - X: ``x_title``, ``made_with_ai``, ``x_paid_partnership``.
 - The API has auto-comment fields (listed in compliance.FORBIDDEN_PAYLOAD_FIELDS). We never send any (invariant 8).
-- ``paid_partnership=true`` together with TikTok ``privacy_level=SELF_ONLY`` is refused with HTTP 400
-  ``commercial_disclosure_privacy_conflict``. We do NOT send ``paid_partnership`` (the explicit
-  ``brand_content_toggle`` always wins over it). Not documented: whether TikTok itself accepts
-  ``brand_content_toggle=true`` with ``SELF_ONLY``; a private-mode TikTok post may be rejected (see PR notes).
+- TikTok branded content vs private (verified 2026-11-23): TikTok allows branded content only with public/friends
+  visibility, never "only me" (https://developers.tiktok.com/docs/en/content-sharing-guidelines). Upload-Post refuses
+  ``paid_partnership=true`` + ``SELF_ONLY`` with HTTP 400 ``commercial_disclosure_privacy_conflict`` and publishes
+  ``disclose_commercial`` + ``branded_content=true`` + ``SELF_ONLY`` as ``PUBLIC_TO_EVERYONE``
+  (https://docs.upload-post.com/api/upload-video, https://docs.upload-post.com/guides/paid-partnership). A sent
+  ``brand_content_toggle`` (even false) always wins over ``paid_partnership``. So: live sends
+  ``brand_content_toggle=true``; private sends ``SELF_ONLY`` with ``brand_content_toggle=false`` and none of
+  ``paid_partnership`` / ``disclose_commercial`` / ``branded_content`` / ``your_brand`` (invariant 4 exception,
+  enforced by ``compliance.assert_tiktok_disclosure`` before anything is sent).
 - Status: ``GET https://api.upload-post.com/api/uploadposts/status?request_id=...`` (same auth header).
   https://docs.upload-post.com/api/upload-status. Top-level ``status``: pending, queued, processing, in_progress,
   completed, failed, not_found (404). Body has ``request_id``, ``external_id``, ``completed``, ``total``,
@@ -65,6 +70,7 @@ from clipforge.compliance import (
     AD_PREFIX,
     YOUTUBE_TITLE_LIMIT,
     assert_no_engagement_fields,
+    assert_tiktok_disclosure,
     normalize_caption,
 )
 from clipforge.config import AppConfig, Settings
@@ -109,7 +115,9 @@ def build_payload(request: PublishRequest, campaign: CampaignIn, app_config: App
     """The form fields (everything except the video file) for one platform of one post.
 
     Invariant 2: the caption goes through `compliance.normalize_caption` (starts with '#ad ', X has no URLs).
-    Invariant 4: paid-content flags set, AI/synthetic flags false. Invariant 8: `assert_no_engagement_fields` on the
+    Invariant 4: paid-content flags set, AI/synthetic flags false; the one exception is a private-mode TikTok post,
+    which is SELF_ONLY with no branded field (`compliance.assert_tiktok_disclosure`, checked on the final dict).
+    Invariant 8: `assert_no_engagement_fields` on the
     final dict, and no auto-comment field is ever produced. Platform eligibility (invariant 9) is the dispatcher's
     job; this function only formats. Instagram has no private mode (PRD F9), so it is refused in PRIVATE mode here.
     """
@@ -135,7 +143,8 @@ def build_payload(request: PublishRequest, campaign: CampaignIn, app_config: App
                 "privacy_level": "SELF_ONLY" if private else "PUBLIC_TO_EVERYONE",
                 "post_mode": "DIRECT_POST",
                 "disable_inbox_fallback": True,
-                "brand_content_toggle": True,
+                # TikTok forbids branded content on a private post (invariant 4 private-mode exception).
+                "brand_content_toggle": not private,
                 "brand_organic_toggle": False,
                 "is_aigc": False,
             }
@@ -175,6 +184,8 @@ def build_payload(request: PublishRequest, campaign: CampaignIn, app_config: App
             }
         )
     assert_no_engagement_fields(payload)
+    if platform is Platform.TIKTOK:
+        assert_tiktok_disclosure(payload, private=private)
     return payload
 
 
@@ -384,6 +395,8 @@ class UploadPostClient:
                 upload_post_ref=f"dry-run-{request.post_id}",
             )
         form = {k: _form_value(v) for k, v in payload.items()}
+        if request.platform is Platform.TIKTOK:  # last check on exactly what is sent (raises ComplianceError)
+            assert_tiktok_disclosure(form, private=request.mode is PublishMode.PRIVATE)
         video = Path(request.video_path)
         headers = self._headers({"Idempotency-Key": str(payload["request_id"])})
 

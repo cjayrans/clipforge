@@ -12,6 +12,15 @@ External facts used here (verified 2026-11-22):
   X 280 chars, weighted).
 - `first_comment` and `<platform>_first_comment` exist in Upload-Post's upload API
   (https://docs.upload-post.com/api/upload-video). We never send either.
+
+TikTok branded content and private posts (verified 2026-11-23, invariant 4 private-mode exception):
+- TikTok: branded content "can only be configured with visibility as public/friends"; with "only me" (SELF_ONLY) the
+  Branded Content option must be disabled or visibility switched to public.
+  https://developers.tiktok.com/docs/en/content-sharing-guidelines
+- Upload-Post: `paid_partnership` with `privacy_level=SELF_ONLY` is refused with HTTP 400
+  `commercial_disclosure_privacy_conflict`; `disclose_commercial` + `branded_content=true` with SELF_ONLY is published
+  as PUBLIC_TO_EVERYONE. A sent `brand_content_toggle` (even false) always wins over `paid_partnership`.
+  https://docs.upload-post.com/api/upload-video, https://docs.upload-post.com/guides/paid-partnership
 """
 
 from __future__ import annotations
@@ -87,6 +96,26 @@ FORBIDDEN_PAYLOAD_FIELDS: frozenset[str] = frozenset(
         "auto_dm",
     }
 )
+
+# Invariant 4 for TikTok payloads. Key matching is on the compact key: lowercase with "[]", "_", "-" and spaces
+# removed, at any nesting depth, so `paid_partnership`, `paidPartnership` and `PAID-PARTNERSHIP` are the same key.
+TIKTOK_LIVE_PRIVACY_LEVEL = "PUBLIC_TO_EVERYONE"
+TIKTOK_PRIVATE_PRIVACY_LEVEL = "SELF_ONLY"
+_PRIVACY_SUFFIX = "privacylevel"  # any key ending in this is a privacy level
+_BRAND_CONTENT_SUFFIX = "brandcontenttoggle"  # true outside private mode, false in private mode
+_BRAND_ORGANIC_SUFFIX = "brandorganictoggle"  # false in private mode
+# Top-level toggles a private payload must send explicitly as false (an explicit brand_content_toggle=false also
+# overrides any paid_partnership on Upload-Post's side).
+TIKTOK_PRIVATE_FALSE_TOGGLES: tuple[str, ...] = ("brand_content_toggle", "brand_organic_toggle")
+# A private payload must not contain any key whose compact form contains one of these, with any value (even false).
+TIKTOK_PRIVATE_FORBIDDEN_KEY_FRAGMENTS: tuple[str, ...] = (
+    "paidpartnership",
+    "disclosecommercial",
+    "brandedcontent",
+    "yourbrand",
+)
+_TRUE_STRINGS = frozenset({"true", "1", "yes", "on"})  # values Upload-Post accepts as true
+_FALSE_STRINGS = frozenset({"false", "0", "no", "off"})
 
 MEDIA_EXTENSIONS: frozenset[str] = frozenset({".mp4", ".mov", ".mkv", ".webm", ".m4v", ".mp3", ".m4a", ".wav"})
 
@@ -416,6 +445,73 @@ def assert_no_engagement_fields(payload: Mapping[str, object]) -> None:
                 walk(item, f"{path}{i}.")
 
     walk(payload, "")
+
+
+def _compact_key(key: str) -> str:
+    return re.sub(r"[\[\]_\-\s]", "", key.lower())
+
+
+def _is_true(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str | int) and str(value).strip().lower() in _TRUE_STRINGS
+
+
+def _is_false(value: object) -> bool:
+    if isinstance(value, bool):
+        return not value
+    return isinstance(value, str | int) and str(value).strip().lower() in _FALSE_STRINGS
+
+
+def _walk_keys(obj: object, path: str = "") -> Iterable[tuple[str, str, object]]:
+    """Yield (path, compact key, value) for every mapping key at any depth."""
+    if isinstance(obj, Mapping):
+        for k, v in obj.items():
+            yield f"{path}{k}", _compact_key(str(k)), v
+            yield from _walk_keys(v, f"{path}{k}.")
+    elif isinstance(obj, list | tuple):
+        for i, item in enumerate(obj):
+            yield from _walk_keys(item, f"{path}{i}.")
+
+
+def assert_tiktok_disclosure(payload: Mapping[str, object], *, private: bool) -> None:
+    """Invariant 4 for one TikTok request payload (bool values or their form-encoded strings).
+
+    Live / dry_run: `privacy_level` must be exactly PUBLIC_TO_EVERYONE and `brand_content_toggle` true, and every
+    privacy-level or brand-content-toggle key at any depth must agree.
+    Private (the one exception to invariant 4): every privacy level must be exactly SELF_ONLY, the branded toggles must
+    be sent and false, and no paid-partnership / commercial-disclosure / branded-content field may appear in any
+    spelling. TikTok forbids branded content on a private post, and Upload-Post may publish that combination publicly.
+    """
+    entries = list(_walk_keys(payload))
+    privacy = [(path, v) for path, key, v in entries if key.endswith(_PRIVACY_SUFFIX)]
+    brand = [(path, v) for path, key, v in entries if key.endswith(_BRAND_CONTENT_SUFFIX)]
+    if not private:
+        if payload.get("privacy_level") != TIKTOK_LIVE_PRIVACY_LEVEL:
+            raise ComplianceError(4, "TikTok privacy_level must be PUBLIC_TO_EVERYONE outside private mode")
+        for path, v in privacy:
+            if v != TIKTOK_LIVE_PRIVACY_LEVEL:
+                raise ComplianceError(4, f"{path}={v!r}; outside private mode only PUBLIC_TO_EVERYONE is allowed")
+        if not _is_true(payload.get("brand_content_toggle")):
+            raise ComplianceError(4, "TikTok brand_content_toggle must be true outside private mode")
+        for path, v in brand:
+            if not _is_true(v):
+                raise ComplianceError(4, f"{path}={v!r}; it must be true outside private mode")
+        return
+
+    if payload.get("privacy_level") is None:
+        raise ComplianceError(4, "private TikTok payload has no privacy_level (the account default may be public)")
+    for path, v in privacy:
+        if v != TIKTOK_PRIVATE_PRIVACY_LEVEL:
+            raise ComplianceError(4, f"private TikTok payload has {path}={v!r}; only SELF_ONLY is allowed")
+    for toggle in TIKTOK_PRIVATE_FALSE_TOGGLES:
+        if toggle not in payload:
+            raise ComplianceError(4, f"private TikTok payload must send {toggle}=false explicitly")
+    for path, key, v in entries:
+        if key.endswith((_BRAND_CONTENT_SUFFIX, _BRAND_ORGANIC_SUFFIX)) and not _is_false(v):
+            raise ComplianceError(4, f"private TikTok payload has branded field {path}={v!r}; it must be false")
+        if any(fragment in key for fragment in TIKTOK_PRIVATE_FORBIDDEN_KEY_FRAGMENTS):
+            raise ComplianceError(4, f"private TikTok payload must not contain branded field {path}")
 
 
 def assert_slot_in_window(slot_at: datetime, window_start: time, window_end: time, tz: tzinfo) -> None:

@@ -82,7 +82,8 @@ def test_tiktok_payload_live(app_config: AppConfig) -> None:
 def test_private_mode_values(app_config: AppConfig) -> None:
     tt = build_payload(_req(Platform.TIKTOK, PublishMode.PRIVATE), campaign(), app_config)
     assert tt["privacy_level"] == "SELF_ONLY"
-    assert tt["brand_content_toggle"] is True  # invariant 4 holds in every mode
+    assert tt["brand_content_toggle"] is False  # invariant 4 private-mode exception: TikTok bans branded + private
+    assert "paid_partnership" not in tt
     yt = build_payload(_req(Platform.YOUTUBE, PublishMode.PRIVATE), campaign(), app_config)
     assert yt["privacyStatus"] == "private"
     assert yt["hasPaidProductPlacement"] is True

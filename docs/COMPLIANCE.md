@@ -14,7 +14,7 @@ originality and multi-account rules summarised in the operator runbook.
 | 1 | A source can be downloaded only if its URL is registered on an active campaign. Twitch downloads need `allow_stream_download=true` on that campaign; YouTube and all other hosts are never downloaded. | `compliance.assert_registered_source`, `ingest.download` | `test_unregistered_source_refused`, `test_youtube_host_refused`, `test_twitch_requires_campaign_permission` |
 | 2 | Every caption on every platform starts with `#ad` (exact, then a space). | `compliance.normalize_caption`, `publish.upload_post.build_payload` | `test_caption_starts_with_ad_all_platforms` |
 | 3 | Every rendered clip has the "Ad" label from 0.0 s to ≥ 3.0 s, recorded in the manifest and checked by QA. | `render.overlays`, `compliance.assert_render_manifest` | `test_ad_label_first_three_seconds` |
-| 4 | Paid-content flags are always set: TikTok `brand_content_toggle=true`; YouTube `hasPaidProductPlacement=true`; AI/synthetic flags false. No code path generates synthetic faces or voices. | `publish.upload_post.build_payload` | `test_disclosure_flags_per_platform` |
+| 4 | Paid-content flags are always set: TikTok `brand_content_toggle=true`; YouTube `hasPaidProductPlacement=true`; AI/synthetic flags false. No code path generates synthetic faces or voices. **One exception, TikTok in `PUBLISH_MODE=private` only:** the post is sent with `privacy_level=SELF_ONLY`, `brand_content_toggle=false`, `brand_organic_toggle=false` and no `paid_partnership`, `disclose_commercial`, `branded_content` or `your_brand` field in any spelling (see note 4 below). Outside private mode TikTok is always `privacy_level=PUBLIC_TO_EVERYONE` and `brand_content_toggle=true`. A payload that breaks either rule raises `ComplianceError` before anything is sent. | `publish.upload_post.build_payload`, `compliance.assert_tiktok_disclosure` (also run on the final form in `UploadPostClient.publish`) | `test_disclosure_flags_per_platform`, `test_tiktok_private_is_self_only_and_never_branded`, `test_tiktok_caption_starts_with_ad_in_every_mode`, `test_guard_raises_on_bad_private_payload`, `test_guard_raises_when_private_toggle_is_missing`, `test_guard_raises_on_unbranded_or_private_live_payload`, `test_youtube_private_keeps_paid_product_placement`, `test_bad_private_payload_is_never_sent`, `test_private_request_body_has_no_branded_field` |
 | 5 | No post is published without an `approvals` row with decision `approve` by the operator, made after the clip's latest render. | `compliance.assert_human_approved`, `publish.dispatcher` | `test_publish_requires_fresh_human_approval` |
 | 6 | No publishing on an evening that is not armed. | `publish.dispatcher` | `test_unarmed_evening_publishes_nothing` |
 | 7 | A post maps to exactly one campaign submission; a rejected post is never resubmitted; no clip file is published twice to the same platform. | DB unique constraints + `compliance.assert_unique_post` | `test_no_duplicate_platform_post`, `test_one_submission_per_post` |
@@ -23,6 +23,19 @@ originality and multi-account rules summarised in the operator runbook.
 | 10 | Clips are 10–90 s and contain no added music track. | `qa.checks`, `render.encode` (only source audio is mapped) | `test_duration_bounds`, `test_only_source_audio_mapped` |
 | 11 | Publish slots fall inside the operator's configured window. | `publish.slots`, `config` validation | `test_slots_inside_operator_window` |
 | 12 | API spend stops at the monthly cap. | `costs.guard` | `test_spend_cap_pauses_pipeline` |
+
+**Note 4: the private-mode TikTok exception.** TikTok does not allow branded content on a private post: it "can only
+be configured with visibility as public/friends", and with "only me" the Branded Content option must be disabled
+(https://developers.tiktok.com/docs/en/content-sharing-guidelines, checked 2026-11-23). Upload-Post refuses
+`paid_partnership=true` with `privacy_level=SELF_ONLY` (HTTP 400 `commercial_disclosure_privacy_conflict`). It
+publishes `disclose_commercial` + `branded_content=true` with `SELF_ONLY` as `PUBLIC_TO_EVERYONE`
+(https://docs.upload-post.com/api/upload-video and https://docs.upload-post.com/guides/paid-partnership, checked
+2026-11-23). So a private test post either fails or goes out publicly, and a public post is the outcome this mode
+exists to prevent. A `SELF_ONLY` post is visible only to the operator, so nobody else sees it without the label. The
+exception covers only the branded flags: the caption still starts with `#ad` (invariant 2), the render still has the
+"Ad" label (invariant 3), and the AI flags stay false. YouTube private posts keep `hasPaidProductPlacement=true`. A
+private-mode TikTok post must never be switched to public by hand. Delete it after the test, and republish in live
+mode if it should go public.
 
 Also enforced (no separate number): tests never run with `PUBLISH_MODE=live`
 (`tests/conftest.py` fails the session if it is set), and the bot ignores non-owner chats
