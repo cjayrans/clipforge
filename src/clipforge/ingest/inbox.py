@@ -50,8 +50,11 @@ def parse_inbox_url(url: str) -> tuple[str, str]:
 
 def resolve_inbox_file(settings: Settings, slug: str, rel: str) -> Path:
     """The file for (slug, rel), guaranteed to be inside `inbox/<slug>/` and not a symlink."""
-    base = (settings.inbox_dir / slug).resolve()
-    candidate = settings.inbox_dir / slug / rel
+    folder = settings.inbox_dir / slug
+    if folder.is_symlink():
+        raise ComplianceError(1, f"inbox folder is a symlink: {slug}/")
+    base = folder.resolve()
+    candidate = folder / rel
     if candidate.is_symlink():
         raise ComplianceError(1, f"inbox file is a symlink: {slug}/{rel}")
     resolved = candidate.resolve()
@@ -98,7 +101,7 @@ def scan_inbox(
         return []
     now = time.time() if now is None else now
     created_rows: list[SourceRow] = []
-    for folder in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
+    for folder in sorted(p for p in root.iterdir() if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")):
         campaign = session.scalar(select(CampaignRow).where(CampaignRow.slug == folder.name))
         files = sorted(p for p in folder.rglob("*") if not any(x.startswith(".") for x in p.relative_to(folder).parts))
         files = [p for p in files if _is_candidate_file(p, now, min_age_s)]

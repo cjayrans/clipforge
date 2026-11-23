@@ -63,6 +63,24 @@ calls every target as `fn(session, settings, *args)`, so the implemented signatu
 
 **Proposal.** Update the docstring in P2.1.
 
+## CR-A6. Public "refused platform" check in `compliance.py`
+
+**Need.** The compliance review found a gap: a direct footage link that *redirects* to TikTok, Instagram, X, Facebook,
+Content Rewards or Vyro has to be refused (invariant 1). Those domains live in the private
+`compliance._REFUSED_DOMAINS`, and Phase 1 may not edit `compliance.py`.
+
+**Stub.** `ingest.download.is_refused_platform_host(url)` uses only the public `classify_source_host`:
+- `classify_source_host("https://<host>/probe.mp4")` returns OTHER only for the refused domains.
+- Any ordinary host serving a media file classifies as DIRECT, so the probe tells the two apart.
+- `_refuse_bad_redirect` refuses those hosts, plus YouTube, Kick and Twitch.
+- Tests: `tests/ingest/test_download.py::test_redirect_to_refused_platform_refused` and `test_is_refused_platform_host`.
+
+**Proposal.**
+- Add `compliance.is_refused_platform_url(url) -> bool`, built on `_host_matches(host, _REFUSED_DOMAINS)` and
+  `mypy --strict` clean, with a test in `tests/compliance/test_inv01_sources.py`.
+- Switch `download.is_refused_platform_host` to call it.
+- This only adds a check; no rule gets weaker.
+
 ## CR-A5. Pipeline wiring (P2.2)
 
 These are not contract changes, but Phase 2 needs to know them:

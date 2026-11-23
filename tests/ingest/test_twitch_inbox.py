@@ -241,3 +241,16 @@ def test_parse_inbox_url() -> None:
         inbox.parse_inbox_url("file://inbox/dylan")
     with pytest.raises(ComplianceError):
         inbox.parse_inbox_url("file:///etc/passwd")
+
+
+def test_symlinked_campaign_folder_refused(session: Session, settings: Settings, factory: Factory) -> None:
+    mine = factory.campaign(name="Mine")
+    theirs = factory.campaign(name="Theirs")
+    _drop(settings, theirs.slug, "ep1.mp4")
+    (settings.inbox_dir / mine.slug).symlink_to(settings.inbox_dir / theirs.slug)
+    rows = inbox.scan_inbox(session, settings)
+    assert [r.campaign_id for r in rows] == [theirs.id]  # nothing registered for "mine" through the link
+    src = factory.source(mine, url=f"file://inbox/{mine.slug}/ep1.mp4")
+    with pytest.raises(ComplianceError, match="symlink"):
+        download_source(session, settings, src, runner=probe_runner)
+    assert (settings.inbox_dir / theirs.slug / "ep1.mp4").exists()

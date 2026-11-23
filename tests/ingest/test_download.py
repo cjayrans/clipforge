@@ -172,6 +172,50 @@ def test_redirect_to_youtube_refused(session: Session, settings: Settings, facto
     assert src.fail_reason == "host_refused"
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://www.tiktok.com/@x/video/1.mp4",
+        "https://www.instagram.com/reel/abc/",
+        "https://x.com/someone/status/1",
+        "https://twitter.com/someone/status/1",
+        "https://www.facebook.com/watch/",
+        "https://contentrewards.com/files/x.mp4",
+        "https://cdn.vyro.app/f.mp4",
+        "https://kick.com/x/videos/1",
+        "https://clips.twitch.tv/Slug",
+    ],
+)
+@respx.mock
+def test_redirect_to_refused_platform_refused(
+    session: Session, settings: Settings, factory: Factory, target: str
+) -> None:
+    src = factory.source(url="https://cdn.example.com/ep1.mp4")
+    respx.get(src.url).respond(302, headers={"location": target})
+    hit = respx.get(target).respond(200, content=BODY)
+    with pytest.raises(ComplianceError, match="redirected"):
+        download_source(session, settings, src, runner=probe_runner())
+    assert not hit.called
+    assert src.status is SourceStatus.FAILED
+    assert src.fail_reason == "host_refused"
+
+
+@pytest.mark.parametrize(
+    ("url", "refused"),
+    [
+        ("https://edge.example.net/abc?sig=1", False),
+        ("https://203.0.113.7/a", False),
+        ("https://drive.usercontent.google.com/download?id=1", False),
+        ("https://www.dropbox.com/s/a/b.mp4", False),
+        ("https://m.tiktok.com/v/1", True),
+        ("https://vyro.com/x", True),
+        ("not a url", True),
+    ],
+)
+def test_is_refused_platform_host(url: str, refused: bool) -> None:
+    assert download.is_refused_platform_host(url) is refused
+
+
 @respx.mock
 def test_redirect_to_cdn_followed(session: Session, settings: Settings, factory: Factory) -> None:
     src = factory.source(url="https://cdn.example.com/ep1.mp4")

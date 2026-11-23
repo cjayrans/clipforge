@@ -7,6 +7,7 @@ line. Delivery to Telegram belongs to the bot (Phase 1 D / Phase 2); see docs/co
 from __future__ import annotations
 
 import logging
+import re
 
 from sqlalchemy.orm import Session
 
@@ -28,8 +29,17 @@ TRANSCRIBE_FAILED = "transcribe_failed"
 TRANSCRIBE_FALLBACK = "transcribe_fallback"
 
 
+_URL_QUERY_RE = re.compile(r"(\b[a-z][a-z0-9+.-]*://[^\s?#]+)\?[^\s#]*", re.IGNORECASE)
+
+
+def redact_urls(text: str) -> str:
+    """Drop query strings from URLs in `text` (signed links, Dropbox `rlkey`), keeping scheme, host and path."""
+    return _URL_QUERY_RE.sub(r"\1?…", text)
+
+
 def alert_operator(session: Session, kind: str, entity_id: int | str, message: str) -> EventRow:
-    """Record an alert for the operator. Never put secrets in `message`."""
+    """Record an alert for the operator. Query strings of URLs in `message` are removed (they can carry tokens)."""
+    message = redact_urls(message)
     log.warning("operator alert [%s] %s: %s", kind, entity_id, message)
     ev = record_event(session, ALERT_ENTITY, entity_id, None, kind, actor="system", detail=message)
     session.flush()

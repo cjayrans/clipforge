@@ -281,3 +281,16 @@ def test_dropbox_file_link_registers(session: Session, settings: Settings, facto
     c = factory.campaign()
     rows = registry.add_source(session, settings, c.id, "https://www.dropbox.com/scl/fi/abc/ep1.mp4?rlkey=x&dl=0")
     assert len(rows) == 1
+
+
+def test_alerts_drop_url_query_strings(session: Session, settings: Settings, factory: Factory) -> None:
+    from clipforge.ingest.alerts import redact_urls
+
+    assert redact_urls("see https://www.dropbox.com/scl/fo/a/b?rlkey=SECRET&dl=0 now") == (
+        "see https://www.dropbox.com/scl/fo/a/b?… now"
+    )
+    assert redact_urls("no url here") == "no url here"
+    c = factory.campaign()
+    registry.add_source(session, settings, c.id, "https://www.dropbox.com/scl/fo/a/b?rlkey=SECRET&dl=0")
+    (alert,) = _alerts(session)
+    assert "SECRET" not in alert.detail

@@ -97,6 +97,20 @@ def source_dir(settings: Settings, campaign_id: int) -> Path:
 # --------------------------------------------------------------------------------------------------
 
 
+def is_refused_platform_host(url: str) -> bool:
+    """True if `url`'s host is a platform/marketplace compliance never downloads from (TikTok, Instagram, X,
+    Facebook, Content Rewards, Vyro, ...), using only the public `compliance.classify_source_host`.
+
+    `classify_source_host` returns DIRECT for any ordinary host serving a media file and OTHER only for the refused
+    domains, so classifying a probe URL `https://<host>/probe.mp4` tells the two apart. A public helper in
+    compliance.py would be cleaner (contract request CR-A6); compliance.py is not editable from Phase 1.
+    """
+    host = urlsplit(url).hostname
+    if not host:
+        return True
+    return compliance.classify_source_host(f"https://{host}/probe.mp4") is SourceHost.OTHER
+
+
 def _refuse_bad_redirect(response: httpx.Response) -> None:
     if not response.has_redirect_location:
         return
@@ -104,6 +118,8 @@ def _refuse_bad_redirect(response: httpx.Response) -> None:
     host = compliance.classify_source_host(target)
     if host in _REDIRECT_REFUSED:
         raise ComplianceError(1, f"download redirected to a {host.value} URL, which this handler never fetches")
+    if is_refused_platform_host(target):
+        raise ComplianceError(1, f"download redirected to {urlsplit(target).hostname}, a platform never downloaded")
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -220,9 +236,13 @@ def download_source(
     except ComplianceError as exc:
         if campaign.status is CampaignStatus.ACTIVE:
             set_source_status(session, source, SourceStatus.FAILED, fail_reason="host_refused", detail=str(exc))
-            alerts.alert_operator(session, alerts.HOST_REFUSED, source.id, f"download refused: {exc}")
+            alerts.alert_operator(
+                session, alerts.HOST_REFUSED, source.id, f"download refused: {alerts.redact_urls(str(exc))}"
+            )
         else:
-            alerts.alert_operator(session, alerts.CAMPAIGN_INACTIVE, source.id, f"download refused: {exc}")
+            alerts.alert_operator(
+                session, alerts.CAMPAIGN_INACTIVE, source.id, f"download refused: {alerts.redact_urls(str(exc))}"
+            )
         raise
 
     if source.status is not SourceStatus.REGISTERED:
@@ -235,10 +255,14 @@ def download_source(
         path, digest = _fetch(host, source, campaign, out_dir, settings, gdrive=gdrive, ytdl_factory=ytdl_factory)
     except ComplianceError as exc:  # e.g. a redirect to YouTube
         set_source_status(session, source, SourceStatus.FAILED, fail_reason="host_refused", detail=str(exc))
-        alerts.alert_operator(session, alerts.HOST_REFUSED, source.id, f"download refused: {exc}")
+        alerts.alert_operator(
+            session, alerts.HOST_REFUSED, source.id, f"download refused: {alerts.redact_urls(str(exc))}"
+        )
         raise
     except (DownloadError, OSError) as exc:
-        alerts.alert_operator(session, alerts.DOWNLOAD_FAILED, source.id, f"download failed (will retry): {exc}")
+        alerts.alert_operator(
+            session, alerts.DOWNLOAD_FAILED, source.id, f"download failed (will retry): {alerts.redact_urls(str(exc))}"
+        )
         if isinstance(exc, DownloadError):
             raise
         raise DownloadError(str(exc)) from exc
