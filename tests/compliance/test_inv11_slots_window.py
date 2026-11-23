@@ -10,7 +10,6 @@ import yaml
 
 from clipforge.compliance import ComplianceError, assert_slot_in_window
 from clipforge.config import AppConfig
-from tests.compliance._helpers import xfail_until
 from tests.conftest import EXAMPLE_CONFIG
 
 NY = ZoneInfo("America/New_York")
@@ -40,7 +39,6 @@ def test_assert_slot_in_window_uses_local_time() -> None:
         assert_slot_in_window(datetime(2026, 11, 23, 20, 10), start, end, NY)
 
 
-@xfail_until("Phase 1 D: clipforge.publish.slots.plan_slots")
 def test_planned_slots_inside_window(app_config: AppConfig) -> None:
     from clipforge.publish.slots import plan_slots  # type: ignore[attr-defined]
 
