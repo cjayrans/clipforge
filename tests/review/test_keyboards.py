@@ -19,8 +19,8 @@ def test_roundtrip() -> None:
 
 def test_worst_case_ids_fit_in_64_bytes() -> None:
     biggest = [
-        keyboards.review_keyboard(10**15),
-        keyboards.reject_reason_keyboard(10**15),
+        keyboards.review_keyboard(10**15, 1_788_000_000),
+        keyboards.reject_reason_keyboard(10**15, 1_788_000_000),
         keyboards.arm_keyboard(date(2026, 11, 23)),
         keyboards.submit_keyboard(10**15),
         keyboards.reconcile_keyboard(10**15),
@@ -32,12 +32,12 @@ def test_worst_case_ids_fit_in_64_bytes() -> None:
 
 
 def test_every_reject_reason_has_a_button() -> None:
-    data = callback_data(keyboards.reject_reason_keyboard(7))
-    assert {d.split(":")[2] for d in data} == {r.value for r in RejectReason}
+    data = callback_data(keyboards.reject_reason_keyboard(7, 99))
+    assert {d.split(":")[3] for d in data} == {r.value for r in RejectReason}
 
 
 def test_review_keyboard_has_the_four_actions() -> None:
-    actions = [keyboards.decode(d)[0] for d in callback_data(keyboards.review_keyboard(1))]
+    actions = [keyboards.decode(d)[0] for d in callback_data(keyboards.review_keyboard(1, 5))]
     assert actions == [keyboards.APPROVE, keyboards.REJECT, keyboards.NEW_HOOK, keyboards.SHORTER]
 
 

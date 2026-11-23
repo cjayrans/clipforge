@@ -34,6 +34,7 @@ from clipforge.compliance import (
     allowed_platforms,
     assert_evening_armed,
     assert_human_approved,
+    assert_slot_in_window,
     assert_unique_post,
 )
 from clipforge.config import AccountSet, Settings
@@ -66,6 +67,8 @@ log = logging.getLogger(__name__)
 
 # Per ARCHITECTURE §4.7: poll for a post URL for up to 10 minutes (TikTok URLs can take ~3 min).
 GIVE_UP_AFTER = timedelta(minutes=10)
+# An unsent PUBLISHING post is re-sent only after this long, so the poller never races an upload still in progress.
+RESEND_AFTER = timedelta(minutes=2)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -419,9 +422,13 @@ def poll_pending_posts(
             continue
         lin = lineage(session, clip)
         if post.upload_post_job is None:
+            if now - post.created_at < RESEND_AFTER:
+                continue  # the dispatcher may still be mid-upload; Idempotency-Key would dedupe, but do not race it
             at = post.slot_at or now
             try:
                 assert_may_publish(session, clip, _evening_for(session, settings, at))
+                window = settings.app.window_for(now.astimezone(settings.app.tz).date())
+                assert_slot_in_window(now, window.start, window.end, settings.app.tz)  # #11 also for a late resend
             except ComplianceError as exc:
                 _fail_post(session, post, f"not re-sent: {exc}")
                 session.commit()

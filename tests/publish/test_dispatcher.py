@@ -27,6 +27,7 @@ from clipforge.db import (
 )
 from clipforge.publish.dispatcher import (
     GIVE_UP_AFTER,
+    RESEND_AFTER,
     approved_queue,
     dispatch_due_slots,
     poll_pending_posts,
@@ -459,11 +460,47 @@ def test_unreachable_upload_post_is_retried_later_with_same_request_id(
     assert post.upload_post_job is None
     with respx.mock() as router:
         route = router.post(f"{BASE_URL}/upload").mock(return_value=httpx.Response(200, json={"success": True}))
-        (res,) = poll_pending_posts(session, private_settings, FIRST_SLOT + timedelta(seconds=30), client=client)
+        (res,) = poll_pending_posts(session, private_settings, FIRST_SLOT + RESEND_AFTER, client=client)
     assert res.accepted
     assert post.upload_post_job == str(post.id)
     assert route.calls.last.request.headers["Idempotency-Key"] == str(post.id)
     assert len(posts(session, clip)) == 1
+
+
+def test_poller_does_not_race_an_upload_that_may_still_be_running(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    clip = approved_clip(factory, session, video)
+    arm(factory)
+    with respx.mock() as router:
+        router.post(f"{BASE_URL}/upload").mock(return_value=httpx.Response(503))
+        dispatch_due_slots(session, private_settings, FIRST_SLOT, client=client)
+    with respx.mock(assert_all_called=False) as router:
+        route = router.post(f"{BASE_URL}/upload").mock(return_value=httpx.Response(200, json={"success": True}))
+        too_soon = FIRST_SLOT + RESEND_AFTER - timedelta(seconds=1)
+        assert poll_pending_posts(session, private_settings, too_soon, client=client) == []
+    assert route.call_count == 0
+    (post,) = posts(session, clip)
+    assert post.state is PostState.PUBLISHING  # still waiting, not failed
+
+
+def test_late_resend_outside_the_operator_window_is_refused(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    clip = approved_clip(factory, session, video)
+    arm(factory)
+    with respx.mock() as router:
+        router.post(f"{BASE_URL}/upload").mock(return_value=httpx.Response(503))
+        dispatch_due_slots(session, private_settings, FIRST_SLOT, client=client)
+    after_window = datetime(2026, 11, 24, 2, 5, tzinfo=UTC)  # 21:05 ET, window ends at 21:00
+    with respx.mock(assert_all_called=False) as router:
+        route = router.post(f"{BASE_URL}/upload").mock(return_value=httpx.Response(200, json={"success": True}))
+        assert poll_pending_posts(session, private_settings, after_window, client=client) == []
+    assert route.call_count == 0
+    (post,) = posts(session, clip)
+    assert post.state is PostState.FAILED
+    assert post.error is not None
+    assert "#11" in post.error
 
 
 def test_resend_is_refused_when_the_evening_is_no_longer_armed(
@@ -478,7 +515,7 @@ def test_resend_is_refused_when_the_evening_is_no_longer_armed(
     session.flush()
     with respx.mock(assert_all_called=False) as router:
         route = router.post(f"{BASE_URL}/upload").mock(return_value=httpx.Response(200, json={"success": True}))
-        assert poll_pending_posts(session, private_settings, FIRST_SLOT + timedelta(seconds=30), client=client) == []
+        assert poll_pending_posts(session, private_settings, FIRST_SLOT + RESEND_AFTER, client=client) == []
     assert route.call_count == 0
     (post,) = posts(session, clip)
     assert post.state is PostState.FAILED

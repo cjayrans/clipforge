@@ -19,7 +19,7 @@ from clipforge.config import Settings
 from clipforge.db import ClipRow, session_scope
 from clipforge.review import alerts, keyboards
 from clipforge.review.notify import MAX_VIDEO_BYTES, Notifier, NotifyError
-from clipforge.review.service import get_flag, set_flag
+from clipforge.review.service import get_flag, render_stamp, set_flag
 from clipforge.review.views import preview_caption
 from clipforge.schemas import ClipState
 
@@ -69,9 +69,10 @@ async def send_pending_previews(factory: sessionmaker[Session], settings: Settin
             caption = preview_caption(session, settings, clip)
             video, problem = pick_video(clip.path)
             rendered_iso = clip.rendered_at.isoformat()
+            stamp = render_stamp(clip.rendered_at)
         try:
             if video is not None:
-                message_id = await notifier.send_video(video, caption, keyboards.review_keyboard(clip_id))
+                message_id = await notifier.send_video(video, caption, keyboards.review_keyboard(clip_id, stamp))
             else:
                 message_id = await notifier.send_text(f"{caption}\n\nNo preview: {problem}.")
         except NotifyError as exc:

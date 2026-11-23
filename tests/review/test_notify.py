@@ -37,7 +37,7 @@ async def test_send_text_uses_documented_method_and_keyboard() -> None:
     notifier = TelegramNotifier(TOKEN, 7)
     with respx.mock() as router:
         route = router.post(f"{API}/sendMessage").mock(return_value=ok(11))
-        message_id = await notifier.send_text("hello", keyboards.review_keyboard(3))
+        message_id = await notifier.send_text("hello", keyboards.review_keyboard(3, 5))
     assert message_id == 11
     body = route.calls.last.request.content.decode()
     assert "chat_id=7" in body
@@ -63,7 +63,7 @@ async def test_send_video_is_multipart_with_caption(tmp_path: Path) -> None:
     notifier = TelegramNotifier(TOKEN, 7)
     with respx.mock() as router:
         route = router.post(f"{API}/sendVideo").mock(return_value=ok(12))
-        message_id = await notifier.send_video(video, "cap", keyboards.review_keyboard(3))
+        message_id = await notifier.send_video(video, "cap", keyboards.review_keyboard(3, 5))
     assert message_id == 12
     req = route.calls.last.request
     assert req.headers["content-type"].startswith("multipart/form-data")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -15,7 +15,7 @@ from clipforge.config import Settings, load_settings
 from clipforge.db import ApprovalRow, ClipRow, make_session_factory, session_scope, transition
 from clipforge.review import bot, keyboards
 from clipforge.review.bot import BotDeps, build_application, gate, is_owner_chat, on_callback
-from clipforge.review.service import ReviewHooks
+from clipforge.review.service import ReviewHooks, render_stamp
 from clipforge.schemas import ApprovalDecision, ClipState, RejectReason
 from tests.review.fakes import FakeNotifier, callback_data, make_context, make_update
 from tests.support.factories import Factory
@@ -23,6 +23,7 @@ from tests.support.factories import Factory
 OWNER = 111
 RENDERED = datetime(2026, 11, 23, 6, 0, tzinfo=UTC)
 NOW = datetime(2026, 11, 24, 0, 30, tzinfo=UTC)  # 19:30 ET
+STAMP = render_stamp(RENDERED)
 
 
 @pytest.fixture
@@ -74,7 +75,7 @@ async def test_gate_blocks_everyone_when_no_owner_is_configured(settings: Settin
 
 async def test_non_owner_button_press_changes_nothing(deps: BotDeps, factory: Factory, session: Session) -> None:
     clip = pending_clip(factory, session)
-    update = make_update(222, keyboards.encode(keyboards.APPROVE, clip.id))
+    update = make_update(222, keyboards.encode(keyboards.APPROVE, clip.id, STAMP))
     await on_callback(update, make_context(deps))
     update.callback_query.answer.assert_not_awaited()  # not even a toast: strangers get no reply
     session.expire_all()
@@ -91,7 +92,7 @@ async def test_non_owner_commands_get_no_reply(command: Any, deps: BotDeps) -> N
 
 async def test_approve_button(deps: BotDeps, factory: Factory, session: Session) -> None:
     clip = pending_clip(factory, session)
-    update = make_update(OWNER, keyboards.encode(keyboards.APPROVE, clip.id), message_id=55)
+    update = make_update(OWNER, keyboards.encode(keyboards.APPROVE, clip.id, STAMP), message_id=55)
     await on_callback(update, make_context(deps))
     update.callback_query.answer.assert_awaited_once_with("Approved")
     update.callback_query.edit_message_reply_markup.assert_awaited_once_with(reply_markup=None)
@@ -106,14 +107,14 @@ async def test_approve_button(deps: BotDeps, factory: Factory, session: Session)
 
 async def test_reject_flow_asks_for_a_reason_then_rejects(deps: BotDeps, factory: Factory, session: Session) -> None:
     clip = pending_clip(factory, session)
-    menu = make_update(OWNER, keyboards.encode(keyboards.REJECT, clip.id))
+    menu = make_update(OWNER, keyboards.encode(keyboards.REJECT, clip.id, STAMP))
     await on_callback(menu, make_context(deps))
     sent_markup = menu.callback_query.edit_message_reply_markup.await_args.kwargs["reply_markup"]
     assert len(callback_data(sent_markup)) == len(RejectReason)
     session.expire_all()
     assert session.get(ClipRow, clip.id).state is ClipState.PENDING_REVIEW  # type: ignore[union-attr]
 
-    pick = make_update(OWNER, keyboards.encode(keyboards.REJECT_REASON, clip.id, "off_brief"))
+    pick = make_update(OWNER, keyboards.encode(keyboards.REJECT_REASON, clip.id, STAMP, "off_brief"))
     await on_callback(pick, make_context(deps))
     session.expire_all()
     assert session.get(ClipRow, clip.id).state is ClipState.REJECTED  # type: ignore[union-attr]
@@ -122,9 +123,33 @@ async def test_reject_flow_asks_for_a_reason_then_rejects(deps: BotDeps, factory
     assert approval.reason is RejectReason.OFF_BRIEF
 
 
+async def test_old_preview_buttons_are_stale_after_a_rerender(
+    deps: BotDeps, factory: Factory, session: Session
+) -> None:
+    clip = pending_clip(factory, session)
+    old_approve = keyboards.encode(keyboards.APPROVE, clip.id, STAMP)
+    old_reason = keyboards.encode(keyboards.REJECT_REASON, clip.id, STAMP, "boring")
+    transition(session, clip, ClipState.RENDERED)
+    clip.rendered_at = RENDERED + timedelta(hours=1)  # re-rendered: new preview, new stamp
+    transition(session, clip, ClipState.PENDING_REVIEW)
+    session.commit()
+    for data in (old_approve, old_reason):
+        update = make_update(OWNER, data)
+        await on_callback(update, make_context(deps))
+        args, kwargs = update.callback_query.answer.await_args
+        assert "re-rendered" in args[0]
+        assert kwargs["show_alert"] is True
+    session.expire_all()
+    assert session.get(ClipRow, clip.id).state is ClipState.PENDING_REVIEW  # type: ignore[union-attr]
+    assert session.scalars(select(ApprovalRow)).all() == []
+    fresh = make_update(OWNER, keyboards.encode(keyboards.APPROVE, clip.id, render_stamp(clip.rendered_at)))
+    await on_callback(fresh, make_context(deps))
+    fresh.callback_query.answer.assert_awaited_once_with("Approved")
+
+
 async def test_double_tap_shows_a_stale_alert(deps: BotDeps, factory: Factory, session: Session) -> None:
     clip = pending_clip(factory, session)
-    data = keyboards.encode(keyboards.APPROVE, clip.id)
+    data = keyboards.encode(keyboards.APPROVE, clip.id, STAMP)
     await on_callback(make_update(OWNER, data), make_context(deps))
     again = make_update(OWNER, data)
     await on_callback(again, make_context(deps))
@@ -135,7 +160,7 @@ async def test_double_tap_shows_a_stale_alert(deps: BotDeps, factory: Factory, s
     assert len(session.scalars(select(ApprovalRow)).all()) == 1
 
 
-@pytest.mark.parametrize("data", ["garbage", "ap:notanint", "rr:1:not_a_reason", "ap:", "zz:1"])
+@pytest.mark.parametrize("data", ["garbage", "ap:notanint", "rr:1:5:not_a_reason", "ap:1", "ap:", "zz:1"])
 async def test_malformed_buttons_are_refused(deps: BotDeps, data: str) -> None:
     update = make_update(OWNER, data)
     await on_callback(update, make_context(deps))

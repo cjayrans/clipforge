@@ -66,17 +66,18 @@ def _btn(label: str, action: str, *parts: object) -> InlineKeyboardButton:
     return InlineKeyboardButton(label, callback_data=encode(action, *parts))
 
 
-def review_keyboard(clip_id: int) -> InlineKeyboardMarkup:
+def review_keyboard(clip_id: int, stamp: int) -> InlineKeyboardMarkup:
+    """Approve / Reject carry the render stamp, so a button on an old preview cannot act on a newer render."""
     return InlineKeyboardMarkup(
         [
-            [_btn("Approve", APPROVE, clip_id), _btn("Reject", REJECT, clip_id)],
+            [_btn("Approve", APPROVE, clip_id, stamp), _btn("Reject", REJECT, clip_id, stamp)],
             [_btn("New hook", NEW_HOOK, clip_id), _btn("Shorter", SHORTER, clip_id)],
         ]
     )
 
 
-def reject_reason_keyboard(clip_id: int) -> InlineKeyboardMarkup:
-    buttons = [_btn(label, REJECT_REASON, clip_id, reason.value) for reason, label in REASON_LABELS.items()]
+def reject_reason_keyboard(clip_id: int, stamp: int) -> InlineKeyboardMarkup:
+    buttons = [_btn(label, REJECT_REASON, clip_id, stamp, reason.value) for reason, label in REASON_LABELS.items()]
     return InlineKeyboardMarkup([buttons[:3], buttons[3:]])
 
 

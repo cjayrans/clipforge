@@ -38,20 +38,31 @@ def set_flag(session: Session, key: str, value: str) -> None:
     session.flush()
 
 
-def _pending_clip(session: Session, clip_id: int, now: datetime) -> ClipRow:
+def render_stamp(rendered_at: datetime) -> int:
+    """Identifies one render of a clip (its `rendered_at` in whole seconds). Carried in the Approve/Reject buttons."""
+    return int(rendered_at.timestamp())
+
+
+def _pending_clip(session: Session, clip_id: int, now: datetime, stamp: int) -> ClipRow:
     clip = session.get(ClipRow, clip_id)
     if clip is None:
         raise StaleAction(f"clip {clip_id} no longer exists")
     if clip.state is not ClipState.PENDING_REVIEW:
         raise StaleAction(f"clip {clip_id} is {clip.state.value}, not waiting for review")
-    if now <= clip.rendered_at:
+    # The buttons of an old preview must never approve a newer render the operator has not watched (invariant 5).
+    if stamp != render_stamp(clip.rendered_at) or now <= clip.rendered_at:
         raise StaleAction(f"clip {clip_id} was re-rendered after this message; review the new preview")
     return clip
 
 
-def approve_clip(session: Session, clip_id: int, *, now: datetime, message_id: int | None = None) -> ApprovalRow:
-    """The operator approves a PENDING_REVIEW clip: approvals row + PENDING_REVIEW -> APPROVED."""
-    clip = _pending_clip(session, clip_id, now)
+def approve_clip(
+    session: Session, clip_id: int, *, stamp: int, now: datetime, message_id: int | None = None
+) -> ApprovalRow:
+    """The operator approves a PENDING_REVIEW clip: approvals row + PENDING_REVIEW -> APPROVED.
+
+    `stamp` is the `render_stamp` printed in the button the operator pressed; it must match the clip's current render.
+    """
+    clip = _pending_clip(session, clip_id, now, stamp)
     row = ApprovalRow(
         clip_id=clip.id,
         decision=ApprovalDecision.APPROVE,
@@ -66,9 +77,9 @@ def approve_clip(session: Session, clip_id: int, *, now: datetime, message_id: i
 
 
 def reject_clip(
-    session: Session, clip_id: int, reason: RejectReason, *, now: datetime, message_id: int | None = None
+    session: Session, clip_id: int, reason: RejectReason, *, stamp: int, now: datetime, message_id: int | None = None
 ) -> ApprovalRow:
-    clip = _pending_clip(session, clip_id, now)
+    clip = _pending_clip(session, clip_id, now, stamp)
     row = ApprovalRow(
         clip_id=clip.id,
         decision=ApprovalDecision.REJECT,

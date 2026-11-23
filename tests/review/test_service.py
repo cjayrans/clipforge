@@ -10,11 +10,12 @@ from sqlalchemy.orm import Session
 
 from clipforge.config import Settings
 from clipforge.db import ApprovalRow, ClipRow, EveningRow, EventRow, transition
-from clipforge.review.service import StaleAction, approve_clip, reject_clip, skip_tonight
+from clipforge.review.service import StaleAction, approve_clip, reject_clip, render_stamp, skip_tonight
 from clipforge.schemas import ApprovalDecision, ClipState, RejectReason
 from tests.support.factories import Factory
 
 RENDERED = datetime(2026, 11, 23, 6, 0, tzinfo=UTC)
+STAMP = render_stamp(RENDERED)
 
 
 def pending(factory: Factory, session: Session) -> ClipRow:
@@ -25,7 +26,7 @@ def pending(factory: Factory, session: Session) -> ClipRow:
 
 def test_approve_writes_operator_approval_and_transitions(factory: Factory, session: Session) -> None:
     clip = pending(factory, session)
-    row = approve_clip(session, clip.id, now=RENDERED + timedelta(minutes=3), message_id=77)
+    row = approve_clip(session, clip.id, stamp=STAMP, now=RENDERED + timedelta(minutes=3), message_id=77)
     assert row.decision is ApprovalDecision.APPROVE
     assert row.actor == "operator"
     assert row.decided_at == RENDERED + timedelta(minutes=3)
@@ -39,27 +40,49 @@ def test_approve_writes_operator_approval_and_transitions(factory: Factory, sess
 
 def test_double_tap_is_stale(factory: Factory, session: Session) -> None:
     clip = pending(factory, session)
-    approve_clip(session, clip.id, now=RENDERED + timedelta(minutes=3))
+    approve_clip(session, clip.id, stamp=STAMP, now=RENDERED + timedelta(minutes=3))
     with pytest.raises(StaleAction, match="not waiting for review"):
-        approve_clip(session, clip.id, now=RENDERED + timedelta(minutes=4))
+        approve_clip(session, clip.id, stamp=STAMP, now=RENDERED + timedelta(minutes=4))
     assert len(session.scalars(select(ApprovalRow)).all()) == 1
 
 
 def test_unknown_clip_is_stale(session: Session) -> None:
     with pytest.raises(StaleAction, match="no longer exists"):
-        approve_clip(session, 999, now=RENDERED)
+        approve_clip(session, 999, stamp=STAMP, now=RENDERED)
 
 
 def test_approval_cannot_predate_the_render(factory: Factory, session: Session) -> None:
     clip = pending(factory, session)
     with pytest.raises(StaleAction, match="re-rendered"):
-        approve_clip(session, clip.id, now=RENDERED)
+        approve_clip(session, clip.id, stamp=STAMP, now=RENDERED)
     assert clip.state is ClipState.PENDING_REVIEW
+
+
+def test_buttons_of_an_old_preview_cannot_act_on_a_new_render(factory: Factory, session: Session) -> None:
+    clip = pending(factory, session)
+    # New hook / Shorter: re-rendered later, back in review with a newer render
+    transition(session, clip, ClipState.RENDERED)
+    clip.rendered_at = RENDERED + timedelta(hours=1)
+    transition(session, clip, ClipState.PENDING_REVIEW)
+    later = RENDERED + timedelta(hours=2)
+    with pytest.raises(StaleAction, match="re-rendered"):
+        approve_clip(session, clip.id, stamp=STAMP, now=later)  # the old message's Approve
+    with pytest.raises(StaleAction, match="re-rendered"):
+        reject_clip(session, clip.id, RejectReason.BORING, stamp=STAMP, now=later)
+    assert clip.state is ClipState.PENDING_REVIEW
+    assert session.scalars(select(ApprovalRow)).all() == []
+    approve_clip(session, clip.id, stamp=render_stamp(clip.rendered_at), now=later)  # the new preview's Approve
+    assert clip.state is ClipState.APPROVED
+
+
+def test_render_stamp_is_whole_seconds_and_distinguishes_renders() -> None:
+    assert render_stamp(RENDERED) == render_stamp(RENDERED + timedelta(milliseconds=400))
+    assert render_stamp(RENDERED) != render_stamp(RENDERED + timedelta(seconds=1))
 
 
 def test_reject_records_reason(factory: Factory, session: Session) -> None:
     clip = pending(factory, session)
-    row = reject_clip(session, clip.id, RejectReason.BAD_CROP, now=RENDERED + timedelta(minutes=1))
+    row = reject_clip(session, clip.id, RejectReason.BAD_CROP, stamp=STAMP, now=RENDERED + timedelta(minutes=1))
     assert row.decision is ApprovalDecision.REJECT
     assert row.reason is RejectReason.BAD_CROP
     assert clip.state is ClipState.REJECTED
@@ -67,9 +90,9 @@ def test_reject_records_reason(factory: Factory, session: Session) -> None:
 
 def test_approve_after_reject_is_stale(factory: Factory, session: Session) -> None:
     clip = pending(factory, session)
-    reject_clip(session, clip.id, RejectReason.BORING, now=RENDERED + timedelta(minutes=1))
+    reject_clip(session, clip.id, RejectReason.BORING, stamp=STAMP, now=RENDERED + timedelta(minutes=1))
     with pytest.raises(StaleAction):
-        approve_clip(session, clip.id, now=RENDERED + timedelta(minutes=2))
+        approve_clip(session, clip.id, stamp=STAMP, now=RENDERED + timedelta(minutes=2))
 
 
 def test_skip_tonight(session: Session, settings: Settings) -> None:

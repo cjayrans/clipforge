@@ -180,24 +180,27 @@ async def cmd_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def _approve(deps: BotDeps, parts: list[str], message_id: int | None) -> Outcome:
     clip_id = keyboards.int_part(parts)
+    stamp = keyboards.int_part(parts, 1)
     with session_scope(deps.factory) as session:
-        approve_clip(session, clip_id, now=deps.clock(), message_id=message_id)
+        approve_clip(session, clip_id, stamp=stamp, now=deps.clock(), message_id=message_id)
     return Outcome("Approved", reply=f"Clip {clip_id}: approved. It joins tonight's queue once you arm the evening.")
 
 
 async def _reject_menu(deps: BotDeps, parts: list[str], message_id: int | None) -> Outcome:
     clip_id = keyboards.int_part(parts)
-    return Outcome("Why?", markup=keyboards.reject_reason_keyboard(clip_id), clear_keyboard=False)
+    stamp = keyboards.int_part(parts, 1)
+    return Outcome("Why?", markup=keyboards.reject_reason_keyboard(clip_id, stamp), clear_keyboard=False)
 
 
 async def _reject(deps: BotDeps, parts: list[str], message_id: int | None) -> Outcome:
     clip_id = keyboards.int_part(parts)
+    stamp = keyboards.int_part(parts, 1)
     try:
-        reason = RejectReason(parts[1])
+        reason = RejectReason(parts[2])
     except (IndexError, ValueError) as exc:
         raise ValueError("bad reject reason") from exc
     with session_scope(deps.factory) as session:
-        reject_clip(session, clip_id, reason, now=deps.clock(), message_id=message_id)
+        reject_clip(session, clip_id, reason, stamp=stamp, now=deps.clock(), message_id=message_id)
     return Outcome("Rejected", reply=f"Clip {clip_id}: rejected ({reason.value}).")
 
 
