@@ -344,6 +344,8 @@ def test_private_mode_sends_tiktok_only_as_self_only(
         results = dispatch_due_slots(session, private_settings, FIRST_SLOT, client=client)
     assert route.call_count == 1  # Instagram is skipped in private mode
     assert b"SELF_ONLY" in route.calls.last.request.content
+    assert b'name="brand_content_toggle"\r\n\r\nfalse' in route.calls.last.request.content
+    assert b"paid_partnership" not in route.calls.last.request.content
     assert [r.platform for r in results] == [Platform.TIKTOK]
     (post,) = posts(session, clip)
     assert post.platform is Platform.TIKTOK

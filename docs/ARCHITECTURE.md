@@ -137,8 +137,10 @@ an `events` row.
   and the OpenAPI spec before coding. Endpoint `POST /api/upload` (multipart). Fields we use:
   - common: `user` (= Upload-Post profile for the account set), `platform[]`, `video`, `title`, `request_id`
     (= our post id, for idempotency), `external_id` (= our post id), `async_upload=true`.
-  - TikTok: `privacy_level` (`PUBLIC_TO_EVERYONE` in live, `SELF_ONLY` in private), `brand_content_toggle=true`,
-    `brand_organic_toggle=false`, `is_aigc=false`, `post_mode=DIRECT_POST`, `disable_inbox_fallback=true`.
+  - TikTok: `privacy_level` (`PUBLIC_TO_EVERYONE` in live, `SELF_ONLY` in private), `brand_content_toggle=true` in
+    live / `false` in private (COMPLIANCE.md invariant 4 exception), `brand_organic_toggle=false`, `is_aigc=false`,
+    `post_mode=DIRECT_POST`, `disable_inbox_fallback=true`. Never `paid_partnership`, `disclose_commercial`,
+    `branded_content` or `your_brand`.
   - YouTube: `privacyStatus` (`public`/`private`), `selfDeclaredMadeForKids=false`, `containsSyntheticMedia=false`,
     `hasPaidProductPlacement=true`, `categoryId` from config.
   - Instagram: `media_type=REELS`, `share_to_feed=true`, `is_ai_generated=false`. No `collaborators` (Content
@@ -151,12 +153,27 @@ an `events` row.
   (`description` is ignored for them); YouTube uses `youtube_title` (we prefix `#ad `) and `youtube_description`; X
   uses `x_title` and also sets `x_paid_partnership`. Status: `GET /api/uploadposts/status?request_id=`; the URL field
   inside a result is not documented, so the parser accepts `post_url` or `url`.
-  **Open question (operator decision before the Phase 3 private run):** TikTok may reject branded content
-  (`brand_content_toggle=true`) when `privacy_level=SELF_ONLY`. Upload-Post documents that `paid_partnership=true`
-  with `SELF_ONLY` returns 400 `commercial_disclosure_privacy_conflict`; it does not say what TikTok does with the
-  branded-content toggle. If the private run fails this way, the options are a private test without the branded flag
-  on a throwaway account, or a one-clip public run Carson approves. Invariant 4 stays as it is unless Carson approves
-  a change in a PR.
+  **TikTok branded content vs private (verified 2026-11-23, resolves the Phase 1 D open question):**
+  - TikTok content sharing guidelines (https://developers.tiktok.com/docs/en/content-sharing-guidelines, last updated
+    2026-08-04): branded content "can only be configured with visibility as public/friends". With "only me", the
+    Branded Content option must be disabled, or visibility switched to public. Unaudited API clients can post
+    `SELF_ONLY` only.
+  - Upload-Post (https://docs.upload-post.com/api/upload-video and
+    https://docs.upload-post.com/guides/paid-partnership): `paid_partnership=true` + `privacy_level=SELF_ONLY` is
+    refused with HTTP 400 `commercial_disclosure_privacy_conflict` before anything is published.
+    `disclose_commercial=true` + `branded_content=true` + `SELF_ONLY` is published as `PUBLIC_TO_EVERYONE`, with a
+    warning. `paid_partnership` maps to TikTok `brand_content_toggle`, but a sent `brand_content_toggle` (even
+    `false`) always wins over it. `brand_content_toggle` and `brand_organic_toggle` default to `false`. Omitting
+    `privacy_level` uses the account default, which is public on a public account. A level the account lacks is
+    refused with `tiktok_privacy_unavailable`.
+  - So private mode sends `SELF_ONLY` + `brand_content_toggle=false` + `brand_organic_toggle=false` and no other
+    commercial-disclosure field. `compliance.assert_tiktok_disclosure` runs on the built payload and again on the
+    final form just before the HTTP call. Keys are compared case-insensitively, ignoring `_`, `-`, spaces and `[]`,
+    at any depth. In private mode it raises `ComplianceError` (invariant 4) for any privacy-level key other than
+    exactly `SELF_ONLY`, a missing `privacy_level`, a missing or not-false brand toggle, or any key containing
+    `paid_partnership`, `disclose_commercial`, `branded_content` or `your_brand`. Outside private mode it raises
+    unless every privacy-level key is exactly `PUBLIC_TO_EVERYONE` and every brand-content toggle is true. The
+    dispatcher fails the post locally ("refused before sending").
 - `dispatcher.py`: every 30 s; for each slot within the next 60 s on an **armed** evening, publish its posts; then poll
   status every 30 s for up to 10 min; on URL → `posts.state=LIVE`, create `submissions` row with
   `deadline_at = published_at + 30 min` and notify the bot via DB flag. Unarmed at first slot → mark evening skipped,
