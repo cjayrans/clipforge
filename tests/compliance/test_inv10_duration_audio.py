@@ -6,7 +6,7 @@ import pytest
 
 from clipforge.compliance import ComplianceError, assert_duration_bounds, assert_render_manifest
 from clipforge.config import AppConfig
-from tests.compliance._helpers import manifest, xfail_until
+from tests.compliance._helpers import manifest
 
 
 @pytest.mark.parametrize(("duration", "ok"), [(10.0, True), (90.0, True), (45.0, True), (9.99, False), (90.01, False)])
@@ -42,7 +42,6 @@ def test_encoder_maps_only_source_audio() -> None:
     assert args.count("-i") == 1 or all("music" not in a for a in args)
 
 
-@xfail_until("Phase 1 C: clipforge.qa.checks.duration_check")
 def test_qa_rejects_out_of_bounds_duration() -> None:
     from clipforge.qa.checks import duration_check  # type: ignore[attr-defined]
 
