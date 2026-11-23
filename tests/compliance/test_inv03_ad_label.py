@@ -6,7 +6,7 @@ import pytest
 
 from clipforge.compliance import ComplianceError, assert_render_manifest, render_manifest_problems
 from clipforge.config import AppConfig
-from tests.compliance._helpers import manifest, xfail_until
+from tests.compliance._helpers import manifest
 
 
 def test_ad_label_first_three_seconds() -> None:
@@ -31,7 +31,6 @@ def test_config_cannot_shorten_ad_label(app_config: AppConfig) -> None:
     assert app_config.render.ad_label_seconds >= 3.0
 
 
-@xfail_until("Phase 1 C: clipforge.render.overlays.ad_label_event")
 def test_overlay_ad_label_spans_first_three_seconds(app_config: AppConfig) -> None:
     from clipforge.render import overlays
 
