@@ -182,3 +182,18 @@ def test_run_qa_uses_campaign_required_tags() -> None:
     assert good.passed
     bad = report(camp=camp, caps=dict.fromkeys(PLATFORMS, "#ad no tag here"))
     assert failed(bad) == {"caption:tiktok", "caption:instagram"}
+
+
+@pytest.mark.parametrize(
+    ("title", "ok"),
+    [("Lamar roasts Franklin", True), (None, False), ("   ", False), ("x" * 96, True), ("x" * 97, False)],
+)
+def test_youtube_title_checked_when_youtube_is_a_target(title: str | None, ok: bool) -> None:
+    """Render PR note: the 100-char YouTube title limit (with the '#ad ' prefix) is checked before YouTube is on."""
+    r = report(platforms=[Platform.YOUTUBE], youtube_title=title)
+    assert ("youtube_title" in failed(r)) is not ok
+
+
+def test_youtube_title_not_checked_without_youtube() -> None:
+    r = report(youtube_title=None)
+    assert "youtube_title" not in {c.name for c in r.checks}

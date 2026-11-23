@@ -145,7 +145,10 @@ def test_blank_ad_label_text_refused(tmp_path: Path, app_config: AppConfig) -> N
     """Invariant 3: a label that would render invisibly must never be recorded as has_ad_label=True."""
     data = app_config.model_dump(by_alias=True)
     data["render"]["ad_label_text"] = "   "
-    cfg = AppConfig.model_validate(data)
+    with pytest.raises(ValueError, match="ad_label_text"):  # config refuses it at load time (Phase 2)
+        AppConfig.model_validate(data)
+    # Render keeps its own check (defence in depth): build the config without validation.
+    cfg = app_config.model_copy(update={"render": app_config.render.model_copy(update={"ad_label_text": "   "})})
     fakes = Fakes()
     with pytest.raises(RenderError, match="ad_label_text is blank"):
         fakes.render(request(tmp_path), cfg)

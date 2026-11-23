@@ -99,16 +99,8 @@ def source_dir(settings: Settings, campaign_id: int) -> Path:
 
 def is_refused_platform_host(url: str) -> bool:
     """True if `url`'s host is a platform/marketplace compliance never downloads from (TikTok, Instagram, X,
-    Facebook, Content Rewards, Vyro, ...), using only the public `compliance.classify_source_host`.
-
-    `classify_source_host` returns DIRECT for any ordinary host serving a media file and OTHER only for the refused
-    domains, so classifying a probe URL `https://<host>/probe.mp4` tells the two apart. A public helper in
-    compliance.py would be cleaner (contract request CR-A6); compliance.py is not editable from Phase 1.
-    """
-    host = urlsplit(url).hostname
-    if not host:
-        return True
-    return compliance.classify_source_host(f"https://{host}/probe.mp4") is SourceHost.OTHER
+    Facebook, Content Rewards, Vyro, ...). Delegates to `compliance.is_refused_platform_url` (CR-A6)."""
+    return compliance.is_refused_platform_url(url)
 
 
 def _refuse_bad_redirect(response: httpx.Response) -> None:

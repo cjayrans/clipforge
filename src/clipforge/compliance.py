@@ -153,6 +153,16 @@ def classify_source_host(url: str) -> SourceHost:
     return SourceHost.OTHER
 
 
+def is_refused_platform_url(url: str) -> bool:
+    """Invariant 1. True if `url`'s host is a platform or marketplace we never download from, even as a "direct"
+    link or a redirect target (TikTok, Instagram, X, Facebook, Content Rewards, Vyro), or if it has no host.
+
+    YouTube, Kick and Twitch have their own SourceHost kinds and are handled by `assert_registered_source`.
+    """
+    host = (urlsplit(url.strip()).hostname or "").lower().rstrip(".")
+    return not host or _host_matches(host, _REFUSED_DOMAINS)
+
+
 def assert_registered_source(url: str, campaign: Campaign, registered_urls: Iterable[str]) -> SourceHost:
     """Invariant 1. Refuse unless `url` is registered on this active campaign and its host may be downloaded.
 
@@ -225,8 +235,12 @@ def caption_length(text: str, platform: Platform) -> int:
     return len(text)
 
 
-def _has_tag(text: str, tag: str) -> bool:
+def has_tag(text: str, tag: str) -> bool:
+    """True if `tag` appears in `text` as a whole tag (case-insensitive, not part of a longer word or tag)."""
     return re.search(rf"(?<![\w#]){re.escape(tag)}(?![\w])", text, re.IGNORECASE) is not None
+
+
+_has_tag = has_tag  # old private name, kept for callers written before Phase 2
 
 
 def normalize_caption(text: str, platform: Platform, campaign: CampaignIn) -> str:
@@ -242,7 +256,7 @@ def normalize_caption(text: str, platform: Platform, campaign: CampaignIn) -> st
         extra = strip_urls(extra)
         body = strip_urls(body)
     tags = [t.strip() for t in campaign.required_tags if t.strip()]
-    missing = [t for t in tags if not _has_tag(f"{extra} {body}", t)]
+    missing = [t for t in tags if not has_tag(f"{extra} {body}", t)]
     # De-duplicate while keeping order.
     missing = list(dict.fromkeys(missing))
 
