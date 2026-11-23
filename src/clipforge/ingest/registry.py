@@ -29,6 +29,7 @@ from clipforge import compliance
 from clipforge.config import Settings
 from clipforge.db import CampaignRow, SourceRow, record_event
 from clipforge.ingest import alerts
+from clipforge.ingest.folders import FolderListError, list_gdrive_folder
 from clipforge.ingest.models import campaign_from_row, campaign_row_values
 from clipforge.schemas import CampaignIn, CampaignStatus, Platform, QACheck, SourceHost, slugify
 
@@ -366,12 +367,10 @@ def add_source(
 def _add_gdrive_folder(
     session: Session, campaign: CampaignRow, folder_url: str, folder_lister: FolderLister | None
 ) -> list[SourceRow]:
-    from clipforge.ingest import folders
-
-    lister = folder_lister or folders.list_gdrive_folder
+    lister = folder_lister or list_gdrive_folder
     try:
         files = lister(folder_url)
-    except folders.FolderListError as exc:
+    except FolderListError as exc:
         return _refuse(session, alerts.DOWNLOAD_FAILED, campaign.id, folder_url, f"could not list folder: {exc}")
     rows: list[SourceRow] = []
     for file_url, rel_path in files:

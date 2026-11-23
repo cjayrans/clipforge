@@ -66,9 +66,9 @@ def ytdl_options(out_dir: Path, stem: str) -> dict[str, object]:
 
 
 def _default_factory(opts: dict[str, object]) -> Any:
-    import yt_dlp
+    import yt_dlp  # type: ignore[import-untyped]
 
-    return yt_dlp.YoutubeDL(opts)  # type: ignore[arg-type]
+    return yt_dlp.YoutubeDL(opts)
 
 
 def download(url: str, out_dir: Path, stem: str, *, ytdl_factory: YtdlFactory | None = None) -> Path:
