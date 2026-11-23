@@ -61,12 +61,18 @@ def test_proxy_args_map_source_streams_only() -> None:
 
 @needs_ffmpeg
 def test_real_proxy_from_fixture(tmp_path: Path) -> None:
+    """Real ffmpeg. Measured on CI (2026-11-23): the 90 s fixture is 5,095,410 bytes; its 480p proxy at crf 28 is
+    1,577,493 bytes (crf 23: 1,884,384; crf 32: 1,465,827). A 3 MB limit forces a proxy and the proxy must fit."""
     from clipforge.qa.probe import probe
 
-    src = FIXTURES / "synthetic_90s.mp4"
+    limit = 3_000_000
     clip = tmp_path / "clip.mp4"
-    clip.write_bytes(src.read_bytes())
-    out = preview_for_telegram(clip, limit_bytes=1000)
+    clip.write_bytes((FIXTURES / "synthetic_90s.mp4").read_bytes())
+    assert clip.stat().st_size > limit  # the original does not fit, so a proxy is needed
+    out = preview_for_telegram(clip, limit_bytes=limit)
+    assert out == tmp_path / "clip.preview.mp4"
+    assert out.stat().st_size <= limit
     p = probe(out)
     assert (p.width, p.height) == (480, 270)
     assert p.audio_streams == 1
+    assert p.duration_s == pytest.approx(90.0, abs=0.2)
