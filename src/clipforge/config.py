@@ -159,6 +159,23 @@ class RenderConfig(_Strict):
     ad_label_seconds: float = Field(ge=compliance.AD_LABEL_MIN_END_S)
     ad_label_text: str = Field(min_length=1)
 
+    @field_validator("ad_label_text")
+    @classmethod
+    def _label_not_blank(cls, v: str) -> str:
+        # Invariant 3: a whitespace-only label would render invisibly (docs/contract-requests/render.md 2b).
+        text = v.strip()
+        if not text:
+            raise ValueError("render.ad_label_text must not be blank (COMPLIANCE #3)")
+        return text
+
+
+class TranscribeConfig(_Strict):
+    """Optional `transcribe:` block (docs/contract-requests/ingest-transcribe.md CR-A2)."""
+
+    local_fallback: bool = True  # faster-whisper on CPU when Groq fails twice (slow)
+    local_model: str = Field(default="large-v3-turbo", min_length=1)  # faster-whisper size name
+    language: str | None = Field(default="en", min_length=2, max_length=16)  # None lets the model detect it
+
 
 class ModelsConfig(_Strict):
     rank: str
@@ -209,6 +226,7 @@ class AppConfig(_Strict):
     campaign_filter: CampaignFilter
     youtube: YoutubeConfig
     retention: RetentionConfig
+    transcribe: TranscribeConfig = Field(default_factory=TranscribeConfig)
 
     @field_validator("timezone")
     @classmethod

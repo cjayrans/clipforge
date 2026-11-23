@@ -19,15 +19,17 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import EllipsisType
 from typing import Any
 
 import groq
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from tenacity import RetryCallState, Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 from tenacity.wait import wait_base
 
 from clipforge import costs
 from clipforge.config import Settings
+from clipforge.db import session_scope
 from clipforge.schemas import Segment, Word
 
 log = logging.getLogger(__name__)
@@ -105,12 +107,20 @@ class GroqTranscriber:
         settings: Settings,
         *,
         client: groq.Groq | None = None,
-        language: str | None = DEFAULT_LANGUAGE,
+        language: str | None | EllipsisType = ...,
+        ledger: sessionmaker[Session] | None = None,
     ) -> None:
+        """`ledger`, when given, runs each spend-cap check and each cost row in its own committed transaction, so a
+        rollback of the caller's session can never erase spend that really happened (COMPLIANCE #12). The caller must
+        not hold an uncommitted write on the same SQLite file while transcribing. Without it, costs are only flushed
+        into `session` (the caller commits).
+
+        `language` defaults to `transcribe.language` in config."""
         self.session = session
         self.settings = settings
+        self.ledger = ledger
         self.model = settings.app.models.transcribe
-        self.language = language
+        self.language = settings.app.transcribe.language if isinstance(language, EllipsisType) else language
         if client is None:
             key = settings.secrets.groq_api_key
             if key is None or not key.get_secret_value():
@@ -135,7 +145,11 @@ class GroqTranscriber:
 
     def transcribe_chunk(self, path: Path, duration_s: float) -> ChunkOutput:
         """Transcribe one file (< 25 MB). Raises SpendCapReached before calling when the cap is hit."""
-        costs.guard(self.session, self.settings.app)
+        if self.ledger is not None:
+            with session_scope(self.ledger) as s:
+                costs.guard(s, self.settings.app)
+        else:
+            costs.guard(self.session, self.settings.app)
         retrying = Retrying(
             stop=stop_after_attempt(MAX_ATTEMPTS),
             wait=_RetryAfterOrExponential(),
@@ -151,7 +165,11 @@ class GroqTranscriber:
             raise TranscriberError(f"Groq transcription failed: {type(exc).__name__}: {str(exc)[:200]}") from exc
         out = parse_verbose_json(data)
         billed = max(MIN_BILLED_S, duration_s)
-        row = costs.record(self.session, self.settings.app, SERVICE, self.model, billed, "audio_seconds")
+        if self.ledger is not None:
+            with session_scope(self.ledger) as s:
+                row = costs.record(s, self.settings.app, SERVICE, self.model, billed, "audio_seconds")
+        else:
+            row = costs.record(self.session, self.settings.app, SERVICE, self.model, billed, "audio_seconds")
         out.cost_usd = row.usd
         log.info("groq transcribed %s (%.0f s billed, $%.4f)", path.name, billed, row.usd)
         return out

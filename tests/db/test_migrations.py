@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
+from sqlalchemy import text
 
 from clipforge.db import Base, CampaignRow, make_engine, make_session_factory, session_scope
 from clipforge.db.backup import backup_db
@@ -48,3 +50,40 @@ def test_backup_keeps_newest(tmp_path: Path) -> None:
     with restored.connect() as conn:
         assert conn.exec_driver_sql("select count(*) from campaigns").scalar() == 1
     restored.dispose()
+
+
+def test_file_database_uses_wal(tmp_path: Path) -> None:
+    """docs/contract-requests/ops.md item 1: worker and bot share one SQLite file in WAL mode."""
+    engine = make_engine(f"sqlite:///{tmp_path / 'wal.db'}")
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("PRAGMA journal_mode")).scalar() == "wal"
+            assert conn.execute(text("PRAGMA synchronous")).scalar() == 1  # NORMAL
+            assert conn.execute(text("PRAGMA foreign_keys")).scalar() == 1
+    finally:
+        engine.dispose()
+
+
+def test_memory_database_keeps_default_journal() -> None:
+    engine = make_engine("sqlite:///:memory:")
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("PRAGMA journal_mode")).scalar() == "memory"
+    finally:
+        engine.dispose()
+
+
+def test_backup_of_wal_database_is_self_contained(tmp_path: Path) -> None:
+    db = tmp_path / "live.db"
+    engine = make_engine(f"sqlite:///{db}")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE t (x INTEGER)"))
+        conn.execute(text("INSERT INTO t VALUES (1)"))
+    out = backup_db(db, tmp_path / "backups", keep=2)
+    engine.dispose()
+    con = sqlite3.connect(out)
+    try:
+        assert con.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert con.execute("SELECT x FROM t").fetchall() == [(1,)]
+    finally:
+        con.close()

@@ -13,9 +13,8 @@ faster_whisper/transcribe.py on master):
   `end`, `word`, `probability`; `TranscriptionInfo.language`, `.duration`.
 - Audio is decoded with PyAV, so no system ffmpeg is needed for this step.
 
-Feature flag: the PRD asks for the fallback "behind a flag". `AppConfig` forbids unknown keys and Phase 1 may not edit
-config.py, so `local_fallback_enabled()` reads `settings.app.transcribe.local_fallback` when Phase 2 adds it (contract
-request) and defaults to True until then.
+Feature flag: the PRD asks for the fallback "behind a flag": `transcribe.local_fallback` in config (default true), with
+`transcribe.local_model` and `transcribe.language` (CR-A2, resolved in Phase 2).
 """
 
 from __future__ import annotations
@@ -38,18 +37,12 @@ class LocalUnavailable(TranscriberError):
     """faster-whisper is not installed here (e.g. the Intel Mac)."""
 
 
-def _transcribe_config(settings: Settings) -> Any:
-    return getattr(settings.app, "transcribe", None)
-
-
 def local_fallback_enabled(settings: Settings) -> bool:
-    cfg = _transcribe_config(settings)
-    return bool(getattr(cfg, "local_fallback", True)) if cfg is not None else True
+    return settings.app.transcribe.local_fallback
 
 
 def local_model_name(settings: Settings) -> str:
-    cfg = _transcribe_config(settings)
-    return str(getattr(cfg, "local_model", DEFAULT_LOCAL_MODEL)) if cfg is not None else DEFAULT_LOCAL_MODEL
+    return settings.app.transcribe.local_model
 
 
 def output_from_faster_whisper(segments: Any, language: str | None) -> ChunkOutput:
