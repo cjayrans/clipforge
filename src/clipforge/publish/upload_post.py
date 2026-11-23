@@ -373,6 +373,7 @@ class UploadPostClient:
         outcome is unknown (network failure / 5xx after retries); the caller leaves the post PUBLISHING and retries
         with the same request id.
         """
+        payload = build_payload(request, campaign, app_config)  # validates (#ad, flags, no engagement) even in dry_run
         if request.mode is PublishMode.DRY_RUN:
             return PublishResult(
                 post_id=request.post_id,
@@ -382,7 +383,6 @@ class UploadPostClient:
                 published_at=datetime.now(UTC),
                 upload_post_ref=f"dry-run-{request.post_id}",
             )
-        payload = build_payload(request, campaign, app_config)
         form = {k: _form_value(v) for k, v in payload.items()}
         video = Path(request.video_path)
         headers = self._headers({"Idempotency-Key": str(payload["request_id"])})
