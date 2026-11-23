@@ -30,6 +30,9 @@ _UNSAFE_FILTER_CHARS = set(":\\',;[]=\n")
 _FORBIDDEN_FLAGS = frozenset({"-filter_complex_script", "-filter_script", "-stream_loop", "-lavfi_script"})
 _FILTER_FLAGS = frozenset({"-filter_complex", "-lavfi", "-vf", "-filter:v", "-af", "-filter:a"})
 # Audio pads ([0:a], [1:a:0]) or filters that read files or generate/mix audio.
+# File-path option values (ass/subtitles filename, fontsdir) are removed before scanning so a folder name like
+# "movie-night" cannot trip the check; paths never carry audio into the output.
+_PATH_OPTION_RE = re.compile(r"\b(?:filename|fontsdir)=[^:,;\[\]]*")
 _AUDIO_FILTER_RE = re.compile(r"\[\d+:a|\b(?:a?movie|amix|amerge|join|anullsrc|sine|aevalsrc|asplit|anoisesrc)\b")
 
 
@@ -168,7 +171,7 @@ def maps_only_source_audio(args: Sequence[str]) -> bool:
     if not audio_maps or any(m not in ("[v]",) and not m.startswith(("0:a", "0:v")) for m in maps):
         return False
     filters = [args[i + 1] for i, a in enumerate(args[:-1]) if a in _FILTER_FLAGS]
-    return not any(_AUDIO_FILTER_RE.search(f) for f in filters)
+    return not any(_AUDIO_FILTER_RE.search(_PATH_OPTION_RE.sub("", f)) for f in filters)
 
 
 def sha256_file(path: Path | str) -> str:

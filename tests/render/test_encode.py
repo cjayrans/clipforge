@@ -151,3 +151,12 @@ def test_filter_path_refuses_special_characters(bad: str) -> None:
 def test_maps_only_source_audio_detects_violations(mutate: object) -> None:
     args = args_for()
     assert not maps_only_source_audio(mutate(args))  # type: ignore[operator]
+
+
+def test_path_words_do_not_trip_audio_check() -> None:
+    args = build_ffmpeg_args(
+        manifest(clip_path="/data/clips/movie-night-sine/clip_1.mp4"),
+        ass_path="/data/clips/movie-night-sine/clip_1.ass",
+        fonts_dir="/app/assets/join/fonts",
+    )
+    assert maps_only_source_audio(args)

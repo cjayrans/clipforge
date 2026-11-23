@@ -223,17 +223,27 @@ def _mean_abs_diff(a: bytes, b: bytes) -> float:
 
 @needs_ffmpeg
 def test_ad_label_pixels_visible_then_gone(tmp_path: Path, app_config: AppConfig) -> None:
-    """Invariant 3 on real pixels: the top-left label region changes when the label ends at 3 s; a control region
-    on the top-right (no overlay) does not."""
+    """Invariant 3 on real pixels. Compare the rendered clip with a baseline encode of the same window and crop but
+    no ASS: the label box differs strongly at 0.5 s and 2.5 s (label on) and barely at 4 s (label off)."""
+    from clipforge.render.encode import EncodeSettings, build_ffmpeg_args, default_plan, run_ffmpeg
+
     req = request(tmp_path, start_s=40.0, end_s=52.0, content_kind="game", hook="", words=[])
-    m = render_candidate(req, app_config)
-    label_box = (40, 95, 160, 70)  # around \pos(48,120), 48 px "Ad" in a padded box
-    control = (840, 95, 160, 70)
-    at_1 = _gray_region(m.clip_path, 1.0, *label_box)
-    at_4 = _gray_region(m.clip_path, 4.0, *label_box)
-    ctrl_1 = _gray_region(m.clip_path, 1.0, *control)
-    ctrl_4 = _gray_region(m.clip_path, 4.0, *control)
-    label_change = _mean_abs_diff(at_1, at_4)
-    control_change = _mean_abs_diff(ctrl_1, ctrl_4)
-    assert label_change > control_change + 8, (label_change, control_change)
-    assert sum(1 for p in at_1 if p > 200) > sum(1 for p in at_4 if p > 200)  # white "Ad" text present at 1 s
+    m = render_candidate(req, app_config)  # 40-52 s is one fit_blur shot of the fixture (cuts at 30 s and 60 s)
+    baseline = str(tmp_path / "baseline.mp4")
+    run_ffmpeg(
+        build_ffmpeg_args(
+            m.model_copy(update={"clip_path": baseline}),
+            source_path=req.source_path,
+            clip_start_s=req.start_s,
+            crop_plan=default_plan(m.duration_s, req.start_s),
+            ass_path=None,
+            settings=EncodeSettings.from_config(app_config.render),
+        )
+    )
+    box = (40, 95, 160, 70)  # around \\pos(48,120): 48 px "Ad" in a padded box
+    diffs = {
+        t: _mean_abs_diff(_gray_region(m.clip_path, t, *box), _gray_region(baseline, t, *box)) for t in (0.5, 2.5, 4.0)
+    }
+    assert diffs[0.5] > 15, diffs
+    assert diffs[2.5] > 15, diffs
+    assert diffs[4.0] < 4, diffs
