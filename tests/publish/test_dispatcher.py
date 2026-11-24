@@ -27,11 +27,15 @@ from clipforge.db import (
 )
 from clipforge.publish.dispatcher import (
     GIVE_UP_AFTER,
+    IN_PROGRESS_GIVE_UP_AFTER,
     RESEND_AFTER,
+    URL_ALERT_AFTER,
     approved_queue,
     dispatch_due_slots,
     poll_pending_posts,
+    url_poll_due,
 )
+from clipforge.publish.repair import repair_failed_posts
 from clipforge.publish.upload_post import BASE_URL, UploadPostClient
 from clipforge.schemas import ApprovalDecision, ClipState, Platform, PostState, RejectReason
 from tests.support.factories import Factory
@@ -433,17 +437,331 @@ def test_poll_failed_status_fails_the_post(
     assert post.error == "denied"
 
 
-def test_success_without_url_says_the_post_may_be_live(
+PUBLISHED_AT = datetime(2026, 11, 24, 1, 12, tzinfo=UTC)  # 20:12 ET, two minutes after the first slot
+PROCESSING = {
+    "status": "processing",
+    "results": [{"platform": "tiktok", "status": "processing", "attempts": 1, "success": False}],
+}
+COMPLETED_NO_URL = {
+    "status": "completed",
+    "results": [
+        {
+            "platform": "tiktok",
+            "success": True,
+            "post_url": None,
+            "upload_timestamp": {"$date": "2026-11-24T01:12:00.000Z"},
+            "warnings": ["TikTok published the video but has not released its public post ID yet."],
+        }
+    ],
+}
+COMPLETED_WITH_URL = {
+    "status": "completed",
+    "results": [
+        {
+            "platform": "tiktok",
+            "success": True,
+            "post_url": "https://www.tiktok.com/@u/video/777",
+            "upload_timestamp": {"$date": "2026-11-24T01:12:00.000Z"},
+        }
+    ],
+}
+
+
+def _poll(
+    session: Session, settings: Settings, client: UploadPostClient, body: dict[str, object], at: datetime
+) -> None:
+    with respx.mock() as router:
+        _status(router, body)
+        poll_pending_posts(session, settings, at, client=client)
+
+
+def test_processing_with_success_false_is_not_a_failure(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    """The bug: a running job reports `success: false`, which was recorded as 'platform reported failure'."""
+    post = _published_private(factory, session, private_settings, client, video)
+    for minutes in (1, 2, 11, 30):  # well past GIVE_UP_AFTER: Upload-Post still says it is processing
+        _poll(session, private_settings, client, PROCESSING, post.created_at + timedelta(minutes=minutes))
+        assert post.state is PostState.PUBLISHING
+        assert post.error is None
+    assert alerts_of(session, "publish_failed") == []
+    # ...but a job Upload-Post itself never finishes is eventually given up on, with an alert.
+    _poll(
+        session,
+        private_settings,
+        client,
+        PROCESSING,
+        post.created_at + IN_PROGRESS_GIVE_UP_AFTER + timedelta(minutes=1),
+    )
+    assert post.state is PostState.FAILED
+    assert post.error is not None
+    assert "no post URL" in post.error
+    assert alerts_of(session, "publish_failed")
+
+
+def test_completed_without_url_is_published_not_failed(
     factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
 ) -> None:
     post = _published_private(factory, session, private_settings, client, video)
-    with respx.mock() as router:
-        _status(router, {"status": "completed", "results": [{"platform": "tiktok", "success": True}]})
-        poll_pending_posts(
-            session, private_settings, post.created_at + GIVE_UP_AFTER + timedelta(minutes=1), client=client
+    _poll(session, private_settings, client, COMPLETED_NO_URL, PUBLISHED_AT + timedelta(seconds=30))
+    assert post.state is PostState.PUBLISHING  # still polled, never failed
+    assert post.error is None
+    assert post.post_url is None
+    assert post.published_at == PUBLISHED_AT  # Upload-Post's upload timestamp ({"$date": ...} object)
+    sub = session.scalar(select(SubmissionRow).where(SubmissionRow.post_id == post.id))
+    assert sub is not None
+    assert sub.deadline_at == PUBLISHED_AT + timedelta(minutes=30)  # counts from the publish time
+    assert alerts_of(session, "publish_failed") == []
+    assert alerts_of(session, "publish_unknown") == []
+    marker = [
+        e for e in session.scalars(select(EventRow).where(EventRow.entity == "post")) if "published at" in e.detail
+    ]
+    assert len(marker) == 1
+    # More polls change nothing: one submission, same publish time, still no failure.
+    _poll(session, private_settings, client, COMPLETED_NO_URL, post.created_at + timedelta(hours=3))
+    assert post.state is PostState.PUBLISHING
+    assert post.published_at == PUBLISHED_AT
+    assert len(session.scalars(select(SubmissionRow)).all()) == 1
+
+
+def test_a_url_released_later_completes_the_post_and_keeps_the_deadline(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    post = _published_private(factory, session, private_settings, client, video)
+    _poll(session, private_settings, client, COMPLETED_NO_URL, PUBLISHED_AT + timedelta(seconds=30))
+    _poll(
+        session, private_settings, client, COMPLETED_WITH_URL, datetime(2026, 11, 24, 3, 15, tzinfo=UTC)
+    )  # on a 5-min mark
+    assert post.state is PostState.LIVE
+    assert post.post_url == "https://www.tiktok.com/@u/video/777"
+    assert post.published_at == PUBLISHED_AT  # not the time the URL arrived
+    (sub,) = session.scalars(select(SubmissionRow)).all()
+    assert sub.deadline_at == PUBLISHED_AT + timedelta(minutes=30)
+    (ready,) = alerts_of(session, "post_url_ready")
+    assert "https://www.tiktok.com/@u/video/777" in ready.detail
+
+
+def test_alert_only_if_the_url_never_arrives_and_only_once(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    post = _published_private(factory, session, private_settings, client, video)
+    _poll(session, private_settings, client, COMPLETED_NO_URL, PUBLISHED_AT + timedelta(seconds=30))
+    # Hour-aligned ticks, so the throttle lets each one through.
+    before = datetime(2026, 11, 25, 0, 0, tzinfo=UTC)  # 22h48 after publishing
+    assert before - PUBLISHED_AT < URL_ALERT_AFTER
+    _poll(session, private_settings, client, COMPLETED_NO_URL, before)
+    assert alerts_of(session, "publish_unknown") == []
+    for hour in (2, 3, 4):
+        _poll(session, private_settings, client, COMPLETED_NO_URL, datetime(2026, 11, 25, hour, 0, tzinfo=UTC))
+    (alert,) = alerts_of(session, "publish_unknown")
+    assert f"/posturl {post.id}" in alert.detail
+    assert post.state is PostState.PUBLISHING  # an alert, not a failure
+
+
+def test_url_polling_is_throttled_for_published_posts() -> None:
+    post = PostRow(published_at=PUBLISHED_AT)
+    unknown = PostRow()
+    odd = datetime(2026, 11, 24, 1, 20, 17, tzinfo=UTC)
+    assert url_poll_due(unknown, odd)  # not yet known to be published: every tick
+    assert url_poll_due(post, PUBLISHED_AT + timedelta(minutes=29, seconds=17))  # first 30 min: every tick
+    aligned_5min = datetime(2026, 11, 24, 2, 5, tzinfo=UTC)  # 53 min after publishing, on a 5-minute mark
+    assert url_poll_due(post, aligned_5min)
+    assert not url_poll_due(post, aligned_5min + timedelta(seconds=30))
+    assert not url_poll_due(post, aligned_5min + timedelta(minutes=4, seconds=30))
+    assert url_poll_due(post, aligned_5min + timedelta(minutes=5))
+    after_a_day = datetime(2026, 11, 25, 3, 0, tzinfo=UTC)
+    assert url_poll_due(post, after_a_day)  # on the hour
+    assert not url_poll_due(post, after_a_day + timedelta(minutes=5))  # overdue: hourly only
+
+
+def test_failed_status_with_an_error_code_fails_the_post_with_the_code(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    post = _published_private(factory, session, private_settings, client, video)
+    body = {
+        "status": "failed",
+        "results": [
+            {
+                "platform": "tiktok",
+                "status": "failed",
+                "success": False,
+                "error_code": "tiktok_media_rejected",
+                "error_message": "TikTok refused the file",
+            }
+        ],
+    }
+    _poll(session, private_settings, client, body, post.created_at + timedelta(minutes=1))
+    assert post.state is PostState.FAILED
+    assert post.error == "tiktok_media_rejected: TikTok refused the file"
+    assert alerts_of(session, "publish_failed")
+
+
+def test_polling_a_published_post_never_sends_anything_again(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    """Invariant 7: an accepted post is only ever polled (GET); the upload route is never called again."""
+    post = _published_private(factory, session, private_settings, client, video)
+    with respx.mock(assert_all_called=False) as router:
+        status = _status(router, COMPLETED_NO_URL)
+        upload = router.post(f"{BASE_URL}/upload").mock(return_value=httpx.Response(200, json={"success": True}))
+        for minutes in (1, 5, 40, 120):
+            poll_pending_posts(session, private_settings, post.created_at + timedelta(minutes=minutes), client=client)
+        assert status.called
+        assert not upload.called
+    assert len(posts(session)) == 1
+
+
+# --- repair of posts marked failed by mistake (cf post repair) -------------------------------------------------------
+
+
+def _wrongly_failed(
+    factory: Factory, session: Session, settings: Settings, client: UploadPostClient, video: Path
+) -> PostRow:
+    post = _published_private(factory, session, settings, client, video)
+    assert post.upload_post_job is not None
+    transition(session, post, PostState.FAILED, detail="platform reported failure")
+    post.error = "platform reported failure"
+    session.commit()
+    return post
+
+
+def _repair(
+    session: Session,
+    settings: Settings,
+    client: UploadPostClient,
+    post: PostRow,
+    body: dict[str, object],
+    *,
+    apply: bool,
+) -> tuple[list, bool]:  # type: ignore[type-arg]
+    with respx.mock(assert_all_called=False) as router:
+        _status(router, body)
+        upload = router.post(f"{BASE_URL}/upload").mock(return_value=httpx.Response(200, json={"success": True}))
+        results = repair_failed_posts(session, settings, [post.id], apply=apply, client=client, now=PUBLISHED_AT)
+        return results, upload.called
+
+
+def test_repair_dry_run_changes_nothing(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    post = _wrongly_failed(factory, session, private_settings, client, video)
+    events_before = len(session.scalars(select(EventRow)).all())
+    (res,), sent = _repair(session, private_settings, client, post, COMPLETED_NO_URL, apply=False)
+    assert res.ok
+    assert not res.applied
+    assert res.message.startswith("would repair")
+    assert not sent
+    assert post.state is PostState.FAILED
+    assert post.error == "platform reported failure"
+    assert len(session.scalars(select(EventRow)).all()) == events_before
+    assert session.scalars(select(SubmissionRow)).all() == []
+
+
+def test_repair_apply_uses_transition_with_operator_actor_and_never_resends(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    post = _wrongly_failed(factory, session, private_settings, client, video)
+    job = post.upload_post_job
+    (res,), sent = _repair(session, private_settings, client, post, COMPLETED_NO_URL, apply=True)
+    assert res.ok
+    assert res.applied
+    assert not sent  # the upload route was never called
+    assert post.state is PostState.PUBLISHING  # the poller finishes it; same row, same Upload-Post job
+    assert post.upload_post_job == job
+    assert post.error is None
+    assert post.published_at == PUBLISHED_AT
+    assert len(posts(session)) == 1
+    (sub,) = session.scalars(select(SubmissionRow)).all()
+    assert sub.deadline_at == PUBLISHED_AT + timedelta(minutes=30)
+    event = session.scalars(
+        select(EventRow).where(
+            EventRow.entity == "post", EventRow.from_state == "failed", EventRow.to_state == "publishing"
         )
-    assert post.error is not None
-    assert "may be live" in post.error
+    ).one()
+    assert event.actor == "operator"
+    assert "repair" in event.detail
+    assert "platform reported failure" in event.detail  # the old error is kept in the audit row
+
+
+def test_repair_apply_with_a_url_goes_live(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    post = _wrongly_failed(factory, session, private_settings, client, video)
+    (res,), _ = _repair(session, private_settings, client, post, COMPLETED_WITH_URL, apply=True)
+    assert res.applied
+    assert post.state is PostState.LIVE
+    assert post.post_url == "https://www.tiktok.com/@u/video/777"
+    states = [
+        (e.from_state, e.to_state, e.actor) for e in session.scalars(select(EventRow).where(EventRow.entity == "post"))
+    ]
+    assert ("failed", "publishing", "operator") in states
+    assert ("publishing", "live", "operator") in states
+
+
+@pytest.mark.parametrize(
+    ("body", "why"),
+    [
+        (PROCESSING, "has not completed"),
+        (
+            {
+                "status": "failed",
+                "results": [{"platform": "tiktok", "status": "failed", "error_code": "tiktok_media_rejected"}],
+            },
+            "really failed",
+        ),
+    ],
+)
+def test_repair_refuses_when_upload_post_does_not_say_completed(
+    factory: Factory,
+    session: Session,
+    private_settings: Settings,
+    client: UploadPostClient,
+    video: Path,
+    body: dict[str, object],
+    why: str,
+) -> None:
+    post = _wrongly_failed(factory, session, private_settings, client, video)
+    (res,), sent = _repair(session, private_settings, client, post, body, apply=True)
+    assert not res.ok
+    assert not res.applied
+    assert why in res.message
+    assert not sent
+    assert post.state is PostState.FAILED
+
+
+def test_repair_refuses_posts_that_are_not_failed_or_were_never_accepted(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    live = _published_private(factory, session, private_settings, client, video)
+    (res,), _ = _repair(session, private_settings, client, live, COMPLETED_NO_URL, apply=True)
+    assert not res.ok
+    assert "only failed posts" in res.message
+    assert live.state is PostState.PUBLISHING
+
+    never_sent = factory.post(factory.clip(), Platform.TIKTOK)  # failed before Upload-Post accepted it: no job
+    transition(session, never_sent, PostState.FAILED)
+    (res,), sent = _repair(session, private_settings, client, never_sent, COMPLETED_NO_URL, apply=True)
+    assert not res.ok
+    assert "never accepted" in res.message
+    assert not sent
+    assert never_sent.state is PostState.FAILED
+
+    with respx.mock(assert_all_called=False) as router:
+        (missing,) = repair_failed_posts(session, private_settings, [99999], client=client)
+        assert not router.calls
+    assert not missing.ok
+
+
+def test_repair_survives_an_unreachable_upload_post(
+    factory: Factory, session: Session, private_settings: Settings, client: UploadPostClient, video: Path
+) -> None:
+    post = _wrongly_failed(factory, session, private_settings, client, video)
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{BASE_URL}/uploadposts/status").mock(return_value=httpx.Response(503))
+        (res,) = repair_failed_posts(session, private_settings, [post.id], apply=True, client=client)
+    assert not res.ok
+    assert "could not read" in res.message
+    assert post.state is PostState.FAILED
 
 
 # --- crash safety -----------------------------------------------------------------------------------------------

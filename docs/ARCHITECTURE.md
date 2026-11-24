@@ -37,6 +37,17 @@ Per-platform `Post` states (`schemas.PostState`): `QUEUED -> PUBLISHING -> LIVE 
 Allowed transitions live in `schemas.CLIP_TRANSITIONS`; `db` refuses any other transition and every transition writes
 an `events` row.
 
+Post status interpretation (`publish.upload_post.interpret_status`, shapes observed live 2026-11-24): Upload-Post's
+per-platform `status` decides, never `success` alone. `queued`/`pending`/`processing`/`in_progress`/`retryable` keep
+polling (an unfinished job reports `success: false`); only `failed` (or `success: false` on a finished entry) fails the
+post. A finished entry with `success: true` and no `post_url` is **published, link not released yet** (TikTok releases the
+public post ID after moderation, up to hours later): the post stays `PUBLISHING` with `published_at` set, the submission
+is opened from that publish time, the Submit-now notice goes out without a URL and tells the operator to copy the link
+from the app and send `/posturl <post id> <link>`, and the poller keeps checking (every tick for 30 min, then every
+5 min, then hourly) and alerts only if the link has not come after 24 h. `FAILED -> PUBLISHING` exists for one reason:
+`cf post repair` (operator, dry run by default) moves a post that was wrongly marked failed back, after Upload-Post
+reports it completed. It never re-sends (the post keeps its `upload_post_job`; invariant 7).
+
 ## 3. Data model (SQLite)
 
 | Table | Key columns |

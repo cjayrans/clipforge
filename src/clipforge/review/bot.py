@@ -35,6 +35,7 @@ from clipforge import heartbeat
 from clipforge.config import Settings
 from clipforge.db import make_engine, make_session_factory, session_scope
 from clipforge.db.migrate import upgrade
+from clipforge.publish.manual_url import PostUrlError, attach_post_url, submission_for
 from clipforge.review import keyboards
 from clipforge.review.deliver import check_worker_heartbeat, deliver_pending_alerts
 from clipforge.review.evening import arm_evening, mark_missed, mark_submitted, skip_from_button
@@ -134,7 +135,7 @@ async def _reply(update: Update, text: str) -> None:
 
 @owner_only
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _reply(update, "/status  /queue  /skip  /costs  /reconcile")
+    await _reply(update, "/status  /queue  /skip  /costs  /reconcile  /posturl <post id> <link>")
 
 
 @owner_only
@@ -171,6 +172,26 @@ async def cmd_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _reply(update, str(exc))
         return
     await _reply(update, "Tonight is skipped. Nothing will publish; approved clips stay queued for the next evening.")
+
+
+@owner_only
+async def cmd_posturl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/posturl <post id> <link>: give the bot the link of a post the platform published but has not released yet."""
+    deps = _deps(context)
+    args = context.args or []
+    if len(args) != 2 or not args[0].isdigit():
+        await _reply(update, "Send it as: /posturl <post id> <link>  (the post id is in the SUBMIT NOW message)")
+        return
+    try:
+        with session_scope(deps.factory) as session:
+            post = attach_post_url(session, deps.settings, int(args[0]), args[1], deps.clock())
+            sub = submission_for(session, post)
+            deadline = "" if sub is None else f"\nDeadline: {sub.deadline_at.astimezone(deps.settings.app.tz):%H:%M}"
+            platform = post.platform.value
+    except PostUrlError as exc:
+        await _reply(update, str(exc))
+        return
+    await _reply(update, f"Post {args[0]} ({platform}): link saved. It is now a live post.{deadline}")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -413,6 +434,7 @@ def register_handlers(app: Application) -> None:  # type: ignore[type-arg]
         ("costs", cmd_costs),
         ("skip", cmd_skip),
         ("reconcile", cmd_reconcile),
+        ("posturl", cmd_posturl),
     ):
         app.add_handler(CommandHandler(name, fn))
     app.add_handler(CallbackQueryHandler(on_callback))

@@ -42,12 +42,14 @@ from clipforge.db import (
     CandidateRow,
     ClipRow,
     EveningRow,
+    EventRow,
     PostRow,
     SourceRow,
     SubmissionRow,
     record_event,
     transition,
 )
+from clipforge.db.transitions import Actor
 from clipforge.publish.queries import Lineage, approvals_for, campaign_model, caption_for, lineage
 from clipforge.publish.slots import (
     QueuedClip,
@@ -76,6 +78,16 @@ log = logging.getLogger(__name__)
 
 # Per ARCHITECTURE §4.7: poll for a post URL for up to 10 minutes (TikTok URLs can take ~3 min).
 GIVE_UP_AFTER = timedelta(minutes=10)
+# Upload-Post itself reports a platform upload as queued/processing: give it longer before we call it stuck. Its own
+# docs fail a job after an hour without activity (https://docs.upload-post.com/api/upload-status).
+IN_PROGRESS_GIVE_UP_AFTER = timedelta(hours=1)
+# A completed upload without a post URL: TikTok releases the public post ID after moderation, "can take hours"
+# (the status warning, observed 2026-11-24). We keep polling and only alert when it still has not come after this.
+URL_ALERT_AFTER = timedelta(hours=24)
+URL_POLL_FAST_FOR = timedelta(minutes=30)  # poll on every tick while the submission deadline may still be open
+URL_POLL_EVERY = timedelta(minutes=5)  # then every few minutes
+URL_POLL_SLOW_EVERY = timedelta(hours=1)  # and hourly once overdue
+POLL_TICK_S = 30  # the url_poller job runs every 30 s (scheduler.worker)
 # An unsent PUBLISHING post is re-sent only after this long, so the poller never races an upload still in progress.
 RESEND_AFTER = timedelta(minutes=2)
 
@@ -284,19 +296,96 @@ def _fail_post(session: Session, post: PostRow, error: str) -> None:
     alerts.raise_alert(session, alerts.PUBLISH_FAILED, post.id, f"{post.platform.value} post {post.id}: {error}")
 
 
-def _go_live(session: Session, settings: Settings, post: PostRow, campaign_id: int, url: str, at: datetime) -> None:
-    post.post_url = url
-    post.published_at = at
-    transition(session, post, PostState.LIVE, detail=url)
+def _ensure_submission(
+    session: Session, settings: Settings, post: PostRow, campaign_id: int, published: datetime
+) -> None:
+    """One submission per post (invariant 7). The deadline counts from the PUBLISH time, not from learning the URL."""
     if session.scalar(select(SubmissionRow.id).where(SubmissionRow.post_id == post.id)) is None:
         session.add(
             SubmissionRow(
                 post_id=post.id,
                 campaign_id=campaign_id,
-                deadline_at=at + timedelta(minutes=settings.app.submission_window_minutes),
+                deadline_at=published + timedelta(minutes=settings.app.submission_window_minutes),
             )
         )
+
+
+def _go_live(
+    session: Session,
+    settings: Settings,
+    post: PostRow,
+    campaign_id: int,
+    url: str,
+    at: datetime,
+    *,
+    actor: Actor = "system",
+    detail: str | None = None,
+) -> None:
+    """PUBLISHING -> LIVE with the post URL. A post that was already known to be published keeps its publish time."""
+    post.post_url = url
+    post.published_at = post.published_at or at
+    transition(session, post, PostState.LIVE, actor=actor, detail=detail or url)
+    _ensure_submission(session, settings, post, campaign_id, post.published_at)
     session.flush()
+
+
+def _published_awaiting_url(
+    session: Session, settings: Settings, post: PostRow, campaign_id: int, published_at: datetime | None, now: datetime
+) -> None:
+    """Upload-Post says the upload COMPLETED but gave no URL (TikTok has not released the post ID yet).
+
+    The post stays PUBLISHING (we keep polling) but is marked published: `published_at` is set and the submission is
+    opened now, so the 30-minute deadline counts from the publish time and the "SUBMIT NOW" notice can go out without
+    a URL (review.evening). Idempotent. Raises one alert when the URL still has not arrived after `URL_ALERT_AFTER`.
+    """
+    if post.published_at is None:
+        post.published_at = published_at or now
+        record_event(
+            session,
+            "post",
+            post.id,
+            PostState.PUBLISHING.value,
+            PostState.PUBLISHING.value,
+            detail=f"published at {post.published_at.isoformat()}; the platform has not released the post URL yet",
+        )
+    _ensure_submission(session, settings, post, campaign_id, post.published_at)
+    if now - post.published_at > URL_ALERT_AFTER and not _already_alerted(session, post, alerts.PUBLISH_UNKNOWN):
+        alerts.raise_alert(
+            session,
+            alerts.PUBLISH_UNKNOWN,
+            post.id,
+            f"{post.platform.value} post {post.id} was published at {post.published_at:%Y-%m-%d %H:%M} UTC but the "
+            f"platform has not released its URL after {URL_ALERT_AFTER}. Find it in the app and send "
+            f"/posturl {post.id} <link>.",
+        )
+    session.flush()
+
+
+def _already_alerted(session: Session, post: PostRow, kind: str) -> bool:
+    return (
+        session.scalar(
+            select(EventRow.id).where(
+                EventRow.entity == alerts.ALERT_ENTITY, EventRow.entity_id == str(post.id), EventRow.to_state == kind
+            )
+        )
+        is not None
+    )
+
+
+def url_poll_due(post: PostRow, now: datetime) -> bool:
+    """Throttle for published posts that still lack a URL: every tick for 30 min, then every 5 min, then hourly.
+
+    Stateless: the worker ticks every `POLL_TICK_S`, and a tick is due when its 30-second slot number is a multiple of
+    the period. Posts that are not yet known to be published are polled on every tick.
+    """
+    if post.published_at is None:
+        return True
+    age = now - post.published_at
+    period = URL_POLL_SLOW_EVERY if age > URL_ALERT_AFTER else URL_POLL_EVERY if age > URL_POLL_FAST_FOR else None
+    if period is None:
+        return True
+    slot = int(now.timestamp()) // POLL_TICK_S
+    return slot % max(1, int(period.total_seconds() // POLL_TICK_S)) == 0
 
 
 def _client_for(settings: Settings, client: UploadPostClient | None) -> UploadPostClient:
@@ -489,8 +578,10 @@ def poll_pending_posts(
 ) -> list[PublishResult]:
     """Re-send posts left unsent after a crash and poll the status of accepted posts until they have a URL.
 
-    A post that is still pending `GIVE_UP_AFTER` after it was created is failed with an alert. When Upload-Post
-    reports success but never provides a URL, the alert says so: the post may be live and must be found by hand.
+    A post that Upload-Post still reports as not started is failed with an alert after `GIVE_UP_AFTER`, one it reports
+    as queued / processing after `IN_PROGRESS_GIVE_UP_AFTER`. A post whose upload COMPLETED but has no URL yet is
+    never failed: it is marked published (see `_published_awaiting_url`) and polled until TikTok releases the URL.
+    A post that already has a `upload_post_job` is only ever polled here, never re-sent (invariant 7).
     """
     active_client = _client_for(settings, client)
     results: list[PublishResult] = []
@@ -523,6 +614,8 @@ def poll_pending_posts(
             continue
         if post.upload_post_job.startswith("dry-run-"):
             continue
+        if not url_poll_due(post, now):
+            continue
         try:
             status = active_client.get_status(post.upload_post_job)
         except UploadPostError as exc:
@@ -530,8 +623,16 @@ def poll_pending_posts(
             continue
         outcome = interpret_status(status, post.platform)
         if outcome.kind == "live" and outcome.post_url:
-            at = outcome.published_at or now
+            waited = post.published_at is not None  # the URL arrived after the post was known to be published
+            at = post.published_at or outcome.published_at or now
             _go_live(session, settings, post, lin.campaign.id, outcome.post_url, at)
+            if waited:
+                alerts.raise_alert(
+                    session,
+                    alerts.POST_URL_READY,
+                    post.id,
+                    f"{post.platform.value} post {post.id}: the platform released the link: {outcome.post_url}",
+                )
             results.append(
                 PublishResult(
                     post_id=post.id,
@@ -544,12 +645,10 @@ def poll_pending_posts(
             )
         elif outcome.kind == "failed":
             _fail_post(session, post, outcome.error or "Upload-Post reported failure")
-        elif now - post.created_at > GIVE_UP_AFTER:
-            note = (
-                "Upload-Post reports success but gave no URL; the post may be live - find it by hand"
-                if outcome.published_without_url
-                else f"no post URL after {GIVE_UP_AFTER}"
-            )
-            _fail_post(session, post, str(note))
+        elif outcome.published_without_url or post.published_at is not None:
+            # Completed but no URL yet: published, not failed. Keep polling; alert only if it never arrives.
+            _published_awaiting_url(session, settings, post, lin.campaign.id, outcome.published_at, now)
+        elif now - post.created_at > (IN_PROGRESS_GIVE_UP_AFTER if outcome.in_progress else GIVE_UP_AFTER):
+            _fail_post(session, post, f"no post URL after {now - post.created_at}")
         session.commit()
     return results
