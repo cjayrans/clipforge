@@ -99,8 +99,10 @@ the diff, and a PR is open against `main` with a summary of verified external fa
 - [x] P2.6 Make targets work end to end; `make up` runs both services healthy.
 
 ## Phase 3 — Live readiness (one session, on the Mac)
-- [ ] P3.1 Run `scripts/bench_render.py` on a real campaign file; tune `-crf`/threads so a 2 × 1 h nightly run
-      finishes < 3 h.
+- [x] P3.1 Run `scripts/bench_render.py` on a real campaign file; tune `-crf`/threads so a 2 × 1 h nightly run
+      finishes < 3 h. Done on synthetic 1080p/30 fps sources (no real campaign file yet), in the image with the
+      worker's `cpus: 6`: projection 10.8 min (16 talk clips of 60 s; 13.2 min at 75 s), so no render setting was changed. Numbers, command and
+      caveats: `docs/pr-descriptions/phase3-bench.md`. Re-run on the first real campaign file (P3.2).
 - [ ] P3.2 Private-mode run on one real source (PRD §7.4); fix crop/caption issues Carson reports.
 - [ ] P3.3 Write `docs/OPERATIONS.md` (commands Carson uses weekly, recovery steps) from the actual implementation.
 - [ ] P3.4 Tag `v1.0.0`.
