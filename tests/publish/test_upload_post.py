@@ -339,3 +339,179 @@ def test_non_http_urls_are_ignored() -> None:
         Platform.TIKTOK,
     )
     assert out.kind == "pending"
+
+
+# --- status interpretation: shapes observed live on 2026-11-24 ------------------------------------------------------
+
+# A TikTok SELF_ONLY post 23 s after it was accepted: the job is running and `success` is false only because it is
+# not finished. This was read as a failure ("platform reported failure"), a false alert for a post that published.
+LIVE_PROCESSING = {
+    "request_id": "1",
+    "job_id": "d6ceaf1f62c94915b57aec6162cd3263",
+    "status": "processing",
+    "scheduler_status": "running",
+    "completed": 0,
+    "failed": 0,
+    "retryable": 0,
+    "skipped": 0,
+    "total": 1,
+    "results": [{"platform": "tiktok", "status": "processing", "attempts": 1, "success": False}],
+    "external_id": "1",
+    "last_update": "Tue, 24 Nov 2026 18:11:36 GMT",
+    "message": "Upload is currently being processed",
+}
+
+# The same job when it finished (personal fields replaced). No entry `status`, `post_url` null, timestamp is an object.
+LIVE_COMPLETED_NO_URL = {
+    "status": "completed",
+    "completed": 1,
+    "total": 1,
+    "results": [
+        {
+            "user_email": "operator@example.invalid",
+            "profile_username": "gaming-1",
+            "platform": "tiktok",
+            "media_type": "video",
+            "upload_timestamp": {"$date": "2026-11-24T18:12:50.577Z"},
+            "success": True,
+            "platform_post_id": None,
+            "post_url": None,
+            "error_message": None,
+            "error_signature": None,
+            "error_code": None,
+            "failure_stage": None,
+            "is_async": True,
+            "original_publish_id": "v_pub_url~v2.7711801765846370318",
+            "warnings": ["TikTok published the video but has not released its public post ID yet."],
+            "request_id": "1",
+            "external_id": "1",
+            "job_id": "d6ceaf1f62c94915b57aec6162cd3263",
+            "request_total_platforms": 1,
+        }
+    ],
+    "external_id": "1",
+    "last_update": {"$date": "2026-11-24T18:12:50.577Z"},
+    "request_id": "1",
+}
+
+
+def _tiktok(body: dict[str, Any]):  # type: ignore[no-untyped-def]
+    return interpret_status(parse_status(body), Platform.TIKTOK)
+
+
+def test_processing_with_success_false_is_pending_not_failed() -> None:
+    out = _tiktok(LIVE_PROCESSING)
+    assert out.kind == "pending"
+    assert out.in_progress
+    assert not out.published_without_url
+    assert out.error is None
+
+
+@pytest.mark.parametrize("state", ["queued", "pending", "processing", "in_progress"])
+@pytest.mark.parametrize("success", [False, True, None])
+def test_every_in_progress_status_keeps_polling(state: str, success: bool | None) -> None:
+    entry: dict[str, Any] = {"platform": "tiktok", "status": state}
+    if success is not None:
+        entry["success"] = success
+    out = _tiktok({"status": state, "results": [entry]})
+    assert out.kind == "pending"
+    assert out.in_progress
+    assert not out.published_without_url
+
+
+def test_in_progress_with_a_stale_failure_message_is_still_pending() -> None:
+    body = {"status": "processing", "results": [{"platform": "tiktok", "status": "processing", "success": False}]}
+    body["results"][0]["message"] = "attempt 1 timed out"  # type: ignore[index]
+    assert _tiktok(body).kind == "pending"
+
+
+def test_completed_with_success_and_no_url_is_published_without_url() -> None:
+    out = _tiktok(LIVE_COMPLETED_NO_URL)
+    assert out.kind == "pending"  # not a failure, and not "live" until there is a link
+    assert out.published_without_url
+    assert not out.in_progress
+    assert out.error is None
+    assert out.published_at == datetime(2026, 11, 24, 18, 12, 50, 577000, tzinfo=UTC)
+    assert out.warnings == ("TikTok published the video but has not released its public post ID yet.",)
+
+
+def test_completed_entry_status_with_null_url_is_published_without_url() -> None:
+    body = {"status": "completed", "results": [{"platform": "tiktok", "status": "completed", "success": True}]}
+    assert _tiktok(body).published_without_url
+
+
+def test_completed_with_url_goes_live_with_the_upload_time() -> None:
+    body = {
+        "status": "completed",
+        "results": [
+            {
+                "platform": "tiktok",
+                "success": True,
+                "post_url": "https://www.tiktok.com/@u/video/7",
+                "upload_timestamp": {"$date": "2026-11-24T18:12:50Z"},
+            }
+        ],
+    }
+    out = _tiktok(body)
+    assert out.kind == "live"
+    assert out.post_url == "https://www.tiktok.com/@u/video/7"
+    assert out.published_at == datetime(2026, 11, 24, 18, 12, 50, tzinfo=UTC)
+
+
+def test_failed_with_error_code_reports_code_and_message() -> None:
+    body = {
+        "status": "failed",
+        "results": [
+            {
+                "platform": "tiktok",
+                "status": "failed",
+                "success": False,
+                "error_code": "tiktok_media_rejected",
+                "error_message": "TikTok refused the file",
+            }
+        ],
+    }
+    out = _tiktok(body)
+    assert out.kind == "failed"
+    assert out.error == "tiktok_media_rejected: TikTok refused the file"
+
+
+def test_failed_without_any_text_says_so() -> None:
+    body = {"status": "failed", "results": [{"platform": "tiktok", "status": "failed", "success": False}]}
+    assert _tiktok(body).error == "platform reported failure"
+
+
+def test_completed_but_success_false_is_a_failure() -> None:
+    body = {
+        "status": "completed",
+        "results": [{"platform": "tiktok", "success": False, "error_code": "tiktok_publish_failed"}],
+    }
+    out = _tiktok(body)
+    assert out.kind == "failed"
+    assert out.error == "tiktok_publish_failed"
+
+
+@pytest.mark.parametrize("success", [False, None])
+def test_retryable_keeps_polling_and_is_never_a_failure(success: bool | None) -> None:
+    entry: dict[str, Any] = {"platform": "tiktok", "status": "retryable", "error_code": "tiktok_publish_failed"}
+    if success is not None:
+        entry["success"] = success
+    out = _tiktok({"status": "processing", "results": [entry]})
+    assert out.kind == "pending"
+    assert out.in_progress
+    assert out.error is None
+
+
+def test_queued_example_from_the_docs_is_not_published() -> None:
+    """The docs' in-progress example has `success: true, message: Queued`: that must not count as published."""
+    out = _tiktok({"status": "in_progress", "results": [{"platform": "tiktok", "success": True, "message": "Queued"}]})
+    assert out.kind == "pending"
+    assert out.in_progress
+    assert not out.published_without_url
+
+
+def test_status_for_another_platform_does_not_count() -> None:
+    other = {"status": "completed", "results": [{"platform": "instagram", "success": True}]}
+    out = _tiktok(other)
+    assert out.kind == "pending"
+    assert not out.published_without_url

@@ -14,6 +14,7 @@ submitted without tapping); it shows up in /reconcile.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from urllib.parse import urlsplit
 
@@ -23,12 +24,12 @@ from sqlalchemy.orm import Session
 from clipforge.config import Settings
 from clipforge.db import CampaignRow, ClipRow, EveningRow, PostRow, SubmissionRow, record_event, transition
 from clipforge.publish.dispatcher import approved_queue, fill_slots, get_or_create_evening
-from clipforge.publish.queries import lineage
+from clipforge.publish.queries import caption_for, lineage
 from clipforge.publish.slots import assign_clips, first_slot_at, plan_slots
 from clipforge.review import keyboards
 from clipforge.review.notify import Notifier
 from clipforge.review.service import StaleAction, skip_tonight
-from clipforge.schemas import PostState, Slot, SubmissionNotice, SubmissionState
+from clipforge.schemas import Platform, PostState, PublishMode, Slot, SubmissionNotice, SubmissionState
 
 log = logging.getLogger(__name__)
 
@@ -131,18 +132,102 @@ def _notice(session: Session, sub: SubmissionRow) -> tuple[SubmissionNotice, boo
     return notice, (urlsplit(post.post_url).hostname or "").endswith(".invalid")
 
 
+@dataclass(frozen=True)
+class MissingLinkNotice:
+    """A post the platform has PUBLISHED but whose public link is not released yet (TikTok: after moderation)."""
+
+    submission_id: int
+    post_id: int
+    campaign_name: str
+    submission_url: str
+    platform: Platform
+    published_at: datetime
+    deadline_at: datetime
+    caption_start: str
+
+
+def _missing_link(session: Session, sub: SubmissionRow) -> MissingLinkNotice | None:
+    """Published (Upload-Post completed it) but no URL yet: the post is still PUBLISHING with `published_at` set."""
+    post = session.get(PostRow, sub.post_id)
+    campaign = session.get(CampaignRow, sub.campaign_id)
+    if (
+        post is None
+        or campaign is None
+        or post.state is not PostState.PUBLISHING
+        or post.published_at is None
+        or post.post_url is not None
+    ):
+        return None
+    clip = session.get(ClipRow, post.clip_id)
+    caption = caption_for(lineage(session, clip).candidate, post.platform) if clip is not None else ""
+    return MissingLinkNotice(
+        submission_id=sub.id,
+        post_id=post.id,
+        campaign_name=campaign.name,
+        submission_url=campaign.submission_url,
+        platform=post.platform,
+        published_at=post.published_at,
+        deadline_at=sub.deadline_at,
+        caption_start=" ".join(caption.split())[:60],
+    )
+
+
+PLATFORM_NAMES = {
+    Platform.TIKTOK: "TikTok",
+    Platform.INSTAGRAM: "Instagram",
+    Platform.YOUTUBE: "YouTube",
+    Platform.X: "X",
+}
+PRIVATE_WARNING = "PRIVATE TEST POST (only you can see it): do NOT submit it to the campaign."
+
+
 def submit_now_text(notice: SubmissionNotice, settings: Settings, *, dry_run: bool) -> str:
     deadline = notice.deadline_at.astimezone(settings.app.tz)
     head = "SUBMIT NOW" + (" (dry run: fake URL, do not submit)" if dry_run else "")
-    return "\n".join(
-        [
-            head,
-            f"{notice.campaign_name} - {notice.platform.value}",
-            f"Submit here: {notice.submission_url}",
-            f"Post: {notice.post_url}",
-            f"Deadline: {deadline:%H:%M} ({settings.app.submission_window_minutes} min after publishing)",
-        ]
-    )
+    lines = [head]
+    if settings.publish_mode is PublishMode.PRIVATE and not dry_run:
+        lines.append(PRIVATE_WARNING)
+    lines += [
+        f"{notice.campaign_name} - {notice.platform.value}",
+        f"Submit here: {notice.submission_url}",
+        f"Post: {notice.post_url}",
+        f"Deadline: {deadline:%H:%M} ({settings.app.submission_window_minutes} min after publishing)",
+    ]
+    return "\n".join(lines)
+
+
+def missing_link_text(notice: MissingLinkNotice, settings: Settings, *, reminder_minutes: int | None = None) -> str:
+    """SUBMIT NOW without a URL: tells the operator to copy the link from the app and how to give it to the bot."""
+    tz = settings.app.tz
+    deadline = notice.deadline_at.astimezone(tz)
+    published = notice.published_at.astimezone(tz)
+    window = settings.app.submission_window_minutes
+    where = {
+        Platform.TIKTOK: "the TikTok app, your profile, the newest video",
+        Platform.INSTAGRAM: "the Instagram app, your profile, the newest reel",
+        Platform.YOUTUBE: "YouTube Studio, the newest video",
+        Platform.X: "the X app, your profile, the newest post",
+    }[notice.platform]
+    lines = [
+        "SUBMIT NOW: LINK NOT AVAILABLE YET"
+        if reminder_minutes is None
+        else f"Reminder: {notice.campaign_name} ({notice.platform.value}) is not marked yet. "
+        f"{reminder_minutes} min left, and the link is still missing.",
+    ]
+    if settings.publish_mode is PublishMode.PRIVATE:
+        lines.append(PRIVATE_WARNING)
+    lines += [
+        f"{notice.campaign_name} - {notice.platform.value}",
+        f"{PLATFORM_NAMES[notice.platform]} published this post at {published:%H:%M} but has not released its link "
+        "yet (it can take hours).",
+        f"1. Open {where}" + (f' (caption starts "{notice.caption_start}").' if notice.caption_start else "."),
+        "2. Share, then Copy link.",
+        f"3. Send it to this bot: /posturl {notice.post_id} <the link you copied>",
+        f"Submit here: {notice.submission_url}",
+        f"Deadline: {deadline:%H:%M}, which is {window} min after it was published at {published:%H:%M}. "
+        f"The {window} minutes count from the publish time, not from when you get the link.",
+    ]
+    return "\n".join(lines)
 
 
 async def send_submission_notices(session: Session, settings: Settings, notifier: Notifier, now: datetime) -> int:
@@ -156,9 +241,13 @@ async def send_submission_notices(session: Session, settings: Settings, notifier
     for sub in pending:
         built = _notice(session, sub)
         if built is None:
-            continue
-        notice, fake = built
-        await notifier.send_text(submit_now_text(notice, settings, dry_run=fake), keyboards.submit_keyboard(sub.id))
+            missing = _missing_link(session, sub)
+            if missing is None:
+                continue
+            await notifier.send_text(missing_link_text(missing, settings), keyboards.submit_keyboard(sub.id))
+        else:
+            notice, fake = built
+            await notifier.send_text(submit_now_text(notice, settings, dry_run=fake), keyboards.submit_keyboard(sub.id))
         sub.notice_sent_at = now
         session.flush()
         sent += 1
@@ -186,13 +275,22 @@ async def send_reminders(session: Session, settings: Settings, notifier: Notifie
         if now < reminder_due_at(settings, sub):
             continue
         built = _notice(session, sub)
+        minutes = max(0, int((sub.deadline_at - now).total_seconds() // 60))
         if built is None:
+            missing = _missing_link(session, sub)
+            if missing is None:
+                continue
+            await notifier.send_text(
+                missing_link_text(missing, settings, reminder_minutes=minutes), keyboards.submit_keyboard(sub.id)
+            )
+            sub.reminder_sent_at = now
+            session.flush()
+            sent += 1
             continue
         notice, fake = built
         if fake:  # dry run: no reminder for a fake post
             sub.reminder_sent_at = now
             continue
-        minutes = max(0, int((sub.deadline_at - now).total_seconds() // 60))
         text = f"Reminder: {notice.campaign_name} ({notice.platform.value}) is not marked yet. {minutes} min left."
         await notifier.send_text(text + f"\n{notice.submission_url}", keyboards.submit_keyboard(sub.id))
         sub.reminder_sent_at = now

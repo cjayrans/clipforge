@@ -85,7 +85,9 @@ POST_TRANSITIONS: dict[PostState, frozenset[PostState]] = {
     PostState.QUEUED: frozenset({PostState.PUBLISHING, PostState.FAILED}),
     PostState.PUBLISHING: frozenset({PostState.LIVE, PostState.FAILED}),
     PostState.LIVE: frozenset(),
-    PostState.FAILED: frozenset(),
+    # Operator repair only (`cf post repair`, publish/repair.py): a post marked failed that Upload-Post reports as
+    # completed goes back to PUBLISHING so the poller can finish it. Never re-sent: it keeps its upload_post_job.
+    PostState.FAILED: frozenset({PostState.PUBLISHING}),
 }
 
 

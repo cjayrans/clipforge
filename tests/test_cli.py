@@ -36,6 +36,7 @@ def test_help_lists_every_command() -> None:
         "import-reconcile",
         "backup",
         "db",
+        "post",
     ):
         assert name in out
 
@@ -95,3 +96,15 @@ def test_bad_config_exits_cleanly(tmp_path: Path) -> None:
 def test_run_without_once() -> None:
     code, _ = _run("run")
     assert code == cli.EXIT_CONFIG
+
+
+def test_post_repair_is_a_dry_run_unless_told_otherwise_and_exits_1_when_it_cannot_repair() -> None:
+    """No post 987654 exists: refused, nothing changed, no HTTP (a missing post never reaches Upload-Post)."""
+    code, out = _run("post", "repair", "987654")
+    assert code == 1
+    assert "post 987654" in out
+    assert "no such post" in out
+    assert "dry run: nothing changed" in out
+    code, out = _run("post", "repair", "987654", "--apply")
+    assert code == 1
+    assert "dry run" not in out

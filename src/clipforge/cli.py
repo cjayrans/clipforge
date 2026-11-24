@@ -68,6 +68,7 @@ TARGETS: dict[str, Target] = {
     "export-reconcile": Target("track.reconcile", "export_csv", "Phase 1 D (feat/ops)"),
     "import-reconcile": Target("track.reconcile", "import_csv", "Phase 1 D (feat/ops)"),
     "run --once": Target("pipeline", "run_once", "Phase 2 (P2.2)"),
+    "post repair": Target("publish.repair", "repair_failed_posts", "Phase 3 (fix/post-status-parsing)"),
 }
 
 EXIT_NOT_IMPLEMENTED = 3
@@ -123,7 +124,7 @@ def _db(settings: Settings) -> Iterator[Session]:
         engine.dispose()
 
 
-def _delegate(ctx: typer.Context, command: str, *args: Any, with_session: bool = True) -> Any:
+def _delegate(ctx: typer.Context, command: str, *args: Any, with_session: bool = True, **kwargs: Any) -> Any:
     try:
         fn = resolve(command)
     except NotImplementedYet as exc:
@@ -131,9 +132,9 @@ def _delegate(ctx: typer.Context, command: str, *args: Any, with_session: bool =
         raise typer.Exit(EXIT_NOT_IMPLEMENTED) from exc
     settings = _settings(ctx)
     if not with_session:
-        return fn(settings, *args)
+        return fn(settings, *args, **kwargs)
     with _db(settings) as session:
-        return fn(session, settings, *args)
+        return fn(session, settings, *args, **kwargs)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -145,10 +146,12 @@ campaign_app = typer.Typer(no_args_is_help=True, help="Campaign registry.")
 source_app = typer.Typer(no_args_is_help=True, help="Footage sources.")
 report_app = typer.Typer(no_args_is_help=True, help="Reports.")
 db_app = typer.Typer(no_args_is_help=True, help="Database maintenance.")
+post_app = typer.Typer(no_args_is_help=True, help="Posts.")
 app.add_typer(campaign_app, name="campaign")
 app.add_typer(source_app, name="source")
 app.add_typer(report_app, name="report")
 app.add_typer(db_app, name="db")
+app.add_typer(post_app, name="post")
 
 
 @app.callback()
@@ -216,6 +219,23 @@ def source_retry(ctx: typer.Context, source_id: int) -> None:
 
 
 # --- long-running processes and reports (Phase 1 D / Phase 2) -----------------------------------------
+
+
+@post_app.command("repair")
+def post_repair(
+    ctx: typer.Context,
+    post_ids: Annotated[list[int], typer.Argument(help="Post ids that were marked failed by mistake.")],
+    apply: Annotated[bool, typer.Option("--apply", help="Make the change. Without it, only report.")] = False,
+) -> None:
+    """Put failed posts that Upload-Post reports as completed back on the normal track. Never re-sends anything."""
+    results = _delegate(ctx, "post repair", post_ids, apply=apply)
+    for r in results:
+        colour = "green" if r.ok else "red"
+        console.print(f"post {r.post_id}: [{colour}]{r.message}[/{colour}]")
+    if not apply:
+        console.print("dry run: nothing changed. Add --apply to repair.")
+    if any(not r.ok for r in results):
+        raise typer.Exit(EXIT_CHECK_FAILED)
 
 
 @app.command("worker")

@@ -47,7 +47,9 @@ candidates → QA → send previews to Telegram. Stop early once `nightly_candid
 3. Each slot (default 20:10, 20:25, 20:40) publishes one clip to every enabled platform for that campaign.
 4. As each URL becomes available the bot sends **Submit now**: campaign name, the campaign's submission link, the post
    URL, the deadline (published_at + 30 min) and buttons **Submitted** / **Missed**. A reminder fires at +20 min if
-   unmarked.
+   unmarked. If the platform has published the post but not released its link (TikTok can take hours), the same
+   message goes out without the link, says so, and tells Carson to copy the link from the app and send
+   `/posturl <post id> <link>`; the deadline still counts from the publish time.
 
 ### 4.4 Saturday: reconcile (operator, ~30 min)
 `/reconcile` in the bot walks through open submissions: status buttons (Approved / Rejected / Pending / Paid) and an

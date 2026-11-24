@@ -43,6 +43,17 @@ unconfirmed; none of the summary-only items is load-bearing for a compliance rul
   NOT stated by the docs: which key holds the URL in a status entry. We accept ``post_url`` or ``url`` and keep
   polling until one is present. The OpenAPI spec (https://docs.upload-post.com/openapi.json, 2.2 MB) could not be read
   in full, so the status response schema there is unverified.
+- Status shapes OBSERVED LIVE on 2026-11-24 (TikTok, ``async_upload=true``, ``SELF_ONLY``), kept as fixtures in
+  tests/publish/test_upload_post.py:
+  * while the job runs: top-level ``status: "processing"`` and an entry ``{platform, status: "processing",
+    attempts: 1, success: false}``. ``success: false`` is only the placeholder of an unfinished job, NOT a failure.
+  * when done: top-level ``status: "completed"`` and an entry with ``success: true``, **no ``status`` key**,
+    ``post_url: null``, ``platform_post_id: null``, ``error_message/error_code/error_signature/failure_stage: null``,
+    ``upload_timestamp: {"$date": "<ISO>"}`` (an object, not a string) and a ``warnings`` list saying TikTok "has
+    not released its public post ID yet (it does so once moderation finishes, which can take hours)".
+  Failure values of ``error_message`` / ``error_code`` have not been observed; the keys are.
+  Decision rule (``interpret_status``): branch on the entry's ``status`` (or the top-level one when the entry has
+  none), never on ``success`` alone.
 - Async accept response (summary only): ``{"success": true, "message": ..., "request_id": ..., "total_platforms": n}``.
 
 One Upload-Post request is made per (post, platform), so ``request_id`` = our post id is unique per request.
@@ -217,6 +228,8 @@ class PlatformStatus:
     fallback_to_inbox: bool = False
     skipped: bool = False
     upload_timestamp: datetime | None = None
+    error_code: str | None = None
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -233,11 +246,18 @@ class StatusOutcome:
     post_url: str | None = None
     published_at: datetime | None = None
     error: str | None = None
-    # True when Upload-Post reports success for the platform but gave no URL (yet).
+    # True when Upload-Post reports the platform upload COMPLETED successfully but gave no URL (yet): the post is
+    # published, its public link is not known. `published_at` is then Upload-Post's upload timestamp.
     published_without_url: bool = False
+    # True while Upload-Post itself says the platform upload is queued / processing / retrying.
+    in_progress: bool = False
+    warnings: tuple[str, ...] = ()
 
 
 def _parse_ts(value: object) -> datetime | None:
+    """ISO string, or the `{"$date": "<ISO>"}` object the status endpoint returns for completed uploads."""
+    if isinstance(value, Mapping):
+        value = value.get("$date")
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -250,15 +270,19 @@ def _parse_ts(value: object) -> datetime | None:
 def _entry(platform: str, raw: Mapping[str, Any]) -> PlatformStatus:
     url = raw.get("post_url") or raw.get("url")
     success = raw.get("success")
+    code = raw.get("error_code")
+    warnings = raw.get("warnings")
     return PlatformStatus(
         platform=str(raw.get("platform") or platform),
         success=success if isinstance(success, bool) else None,
         status=str(raw["status"]) if raw.get("status") is not None else None,
-        message=str(raw.get("message") or raw.get("error") or ""),
+        message=str(raw.get("message") or raw.get("error_message") or raw.get("error") or ""),
         post_url=url if isinstance(url, str) and url.startswith(("http://", "https://")) else None,
         fallback_to_inbox=bool(raw.get("fallback_to_inbox")),
         skipped=bool(raw.get("skipped")) or raw.get("status") == "skipped",
         upload_timestamp=_parse_ts(raw.get("upload_timestamp")),
+        error_code=str(code) if code else None,
+        warnings=tuple(str(w) for w in warnings) if isinstance(warnings, list) else (),
     )
 
 
@@ -278,26 +302,67 @@ def parse_status(body: Mapping[str, Any]) -> UploadStatus:
     )
 
 
-def interpret_status(status: UploadStatus, platform: Platform) -> StatusOutcome:
-    """Turn a status response into pending / live / failed for one platform."""
-    entry = next((r for r in status.results if r.platform.lower() == platform.value), None)
+# Per-platform / top-level statuses that mean "Upload-Post is still working on it" (docs: upload-status).
+IN_PROGRESS_STATUSES = frozenset({"queued", "pending", "processing", "in_progress"})
+
+
+def _failure_text(entry: PlatformStatus | None, status: UploadStatus) -> str:
     if entry is not None:
-        if entry.skipped:
-            return StatusOutcome(
-                "failed", error=f"skipped by Upload-Post: {entry.message or 'platform not configured'}"
-            )
-        if entry.fallback_to_inbox:
-            return StatusOutcome("failed", error="sent to the TikTok inbox instead of being published")
-        if entry.success is False and entry.status != "retryable":
-            return StatusOutcome("failed", error=entry.message or "platform reported failure")
-        if entry.post_url and entry.success is not False and entry.status not in ("failed",):
-            return StatusOutcome("live", post_url=entry.post_url, published_at=entry.upload_timestamp)
-        if entry.status == "failed":
-            return StatusOutcome("failed", error=entry.message or "platform reported failure")
-    if status.status == "failed":
-        return StatusOutcome("failed", error=status.message or "Upload-Post reported the upload failed")
-    published_without_url = bool(entry and entry.success is True and entry.post_url is None)
-    return StatusOutcome("pending", published_without_url=published_without_url)
+        text = entry.message or ""
+        if entry.error_code:
+            text = f"{entry.error_code}: {text}" if text else entry.error_code
+        return text or "platform reported failure"
+    return status.message or "Upload-Post reported the upload failed"
+
+
+def interpret_status(status: UploadStatus, platform: Platform) -> StatusOutcome:
+    """Turn a status response into pending / live / failed for one platform.
+
+    The decision follows the platform entry's `status` (or the top-level `status` when the entry has none, which is
+    what a finished upload looks like). `success` alone decides nothing: an unfinished job reports `success: false`
+    (observed live 2026-11-24), which used to be read as a failure.
+
+    - failed: entry `status == "failed"`, `skipped`, `fallback_to_inbox`, or `success: false` on a finished entry
+      (entry status `completed`, or no entry status while the top-level status is not in progress).
+    - pending, keep polling: the platform ENTRY says queued / pending / processing / in_progress / retryable
+      (`in_progress=True`, which earns the longer give-up in the dispatcher).
+    - live: finished and has a post URL.
+    - pending with `published_without_url`: the upload COMPLETED successfully but there is no URL yet (TikTok
+      releases the public post ID after moderation, up to hours later). The post is published; do not fail it.
+    """
+    entry = next((r for r in status.results if r.platform.lower() == platform.value), None)
+    top = status.status.lower()
+    if entry is None:
+        if top == "failed":
+            return StatusOutcome("failed", error=_failure_text(None, status))
+        return StatusOutcome("pending")  # nothing for this platform yet: not "in progress" (short give-up applies)
+
+    if entry.skipped:
+        return StatusOutcome("failed", error=f"skipped by Upload-Post: {entry.message or 'platform not configured'}")
+    if entry.fallback_to_inbox:
+        return StatusOutcome("failed", error="sent to the TikTok inbox instead of being published")
+    own = (entry.status or "").lower()
+    if own == "failed":
+        return StatusOutcome("failed", error=_failure_text(entry, status))
+    if own in IN_PROGRESS_STATUSES or own == "retryable":
+        return StatusOutcome("pending", in_progress=True, warnings=entry.warnings)
+    # No entry status (finished upload) or "completed": the top-level status says whether it is finished.
+    finished = own == "completed" or (not own and top not in IN_PROGRESS_STATUSES)
+    if not finished:
+        return StatusOutcome("pending", in_progress=True, warnings=entry.warnings)
+    if entry.success is False:
+        return StatusOutcome("failed", error=_failure_text(entry, status))
+    if entry.post_url:
+        return StatusOutcome("live", post_url=entry.post_url, published_at=entry.upload_timestamp)
+    if top == "failed" and entry.success is not True:
+        return StatusOutcome("failed", error=_failure_text(entry, status))
+    published = entry.success is True and (own == "completed" or top == "completed")
+    return StatusOutcome(
+        "pending",
+        published_without_url=published,
+        published_at=entry.upload_timestamp if published else None,
+        warnings=entry.warnings,
+    )
 
 
 # --------------------------------------------------------------------------------------------------
