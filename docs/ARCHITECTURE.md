@@ -52,14 +52,14 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
 
 | Table | Key columns |
 | --- | --- |
-| `campaigns` | id, platform_marketplace (`content_rewards`/`vyro`), name, url, submission_url, cpm_usd, min_payout_usd, per_clip_cap_usd, budget_remaining_usd, allowed_platforms (json), required_tags (json), disclosure_text, rules_notes, is_political, approval_rate_pct, overlay (json), copy_style_notes, stream_channels (json), max_source_minutes, status, created_at |
+| `campaigns` | id, platform_marketplace (`content_rewards`/`vyro`), name, url, submission_url, cpm_usd, min_payout_usd, per_clip_cap_usd, budget_remaining_usd, allowed_platforms (json), required_tags (json), disclosure_text, rules_notes, is_political, approval_rate_pct, overlay (json), copy_style_notes, stream_channels (json), max_source_minutes, moment_profile, status, created_at |
 | `sources` | id, campaign_id, url, sha256, local_path, duration_s, status, downloaded_at, purged_at |
 | `transcripts` | id, source_id, provider, model, words_json_path, language, cost_usd |
-| `candidates` | id, source_id, start_s, end_s, score, standalone, brief_ok, reasons, hook, title, captions_json, prompt_version, state |
+| `candidates` | id, source_id, start_s, end_s, score, standalone, brief_ok, reasons, hook, title, captions_json, prompt_version, state; moment ranker: moment_profile, weights_version, archetype, score_reaction/event/setup/absurdity, gate_results_json, skip_flags, review_flags |
 | `clips` | id, candidate_id, account_set, style_preset, path, duration_s, sha256, qa_report_json, state |
 | `approvals` | id, clip_id, decision, reason, decided_at, telegram_message_id |
 | `evenings` | date, armed_at, skipped, slots_json |
-| `posts` | id, clip_id, platform, slot_at, request_id, upload_post_job, post_url, published_at, state, error |
+| `posts` | id, clip_id, platform, slot_at, request_id, upload_post_job, post_url, published_at, state, error, views_24h, views_72h |
 | `submissions` | id, post_id, campaign_id, deadline_at, state, submitted_at, brand_decision, decided_at, paid_usd |
 | `view_snapshots` | id, post_id, taken_at, views, source (`youtube_api`/`manual`) |
 | `fewshots` | id, kind (`positive`/`negative`), candidate_id, hook, transcript_excerpt, outcome_note, week |
@@ -76,7 +76,8 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
   `overlay` {path under `campaigns/assets/`, position {x_pct, y_pct}, scale, full_duration}; `required_tags` (the
   JSON may call it `required_caption_tags`: text every caption ends with, hashtags or a link); `copy_style_notes`
   (tone for the copy prompt); `stream_channels` (Twitch logins whose VODs/clips may be downloaded);
-  `max_source_minutes` (download only the first N minutes of a stream source).
+  `max_source_minutes` (download only the first N minutes of a stream source); `moment_profile` (name of a file in
+  `config/moment_profiles/`: switches ranking to the moment ranker, §4.3).
 - `download.py`: only `sources` rows. Handlers by host: Google Drive (`gdown`), Dropbox (`?dl=1`), direct HTTP; Twitch VOD/clip
   (`yt-dlp`) only when the source's campaign has `allow_stream_download=true`; with `stream_channels` the metadata is
   read first and a video from another channel (or a VOD still live) is refused before any media is fetched; with
@@ -108,6 +109,21 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
   youtube_title (≤ 60 chars), captions per platform. `compliance.normalize_caption` then forces `#ad` first, appends
   required campaign tags, strips URLs for X, enforces platform length limits.
 - Prompts live in `prompts/*.md` with a `version:` header; the version is stored on each candidate.
+- Moment ranker (campaigns with `moment_profile`; research in `docs/research/clipping-gta6-moment-types.md`). All
+  niche knowledge is in the profile YAML (`config/moment_profiles/<name>.yaml`, `rank/profile.py`): archetypes,
+  weights + `weights_version`, window rules, signal thresholds, word lists, gates, skip rules, review flags.
+  - `media_signals.py`: two cheap ffmpeg passes over the whole source: per-second RMS loudness (`astats`) and
+    keyframe-only frame difference (`signalstats` YDIF). A failed pass degrades to transcript-only signals.
+  - `signals.py` (pure): triggers (motion spike, loud sound without speech, silence beat, cue phrase, chat mention)
+    and reactions (stressed exclamation, laughter, loud speech); z-scores against a trailing median/MAD baseline.
+  - `moments.py` (pure): gate `trigger_reaction` (a reaction within 3 s of a trigger, or no candidate), window rules
+    (2-5 s before the trigger, payoff chain, 12-35 s target, 45 s cap), gate `dead_footage` (low loudness spread and
+    no motion), overlap removal, top 40 by pre-score.
+  - `moment_score.py`: Haiku forced tool `score_moments` (archetype, reaction/event/setup/absurdity 0-10, window,
+    skip/review flags, one-line reason); gates `brief`, `skip_rules` (reject or penalize, e.g. cutscene policy) and
+    `min_score`; weighted score → `Candidate.score`; the model's window only if it obeys the rules. Review flags
+    (sexual/graphic) never reject: the Telegram preview shows "CHECK BEFORE APPROVING". The archetype and reason go
+    to the copy prompt as `$moment_note`.
 - `evals/`: harness that runs scoring on fixture transcripts and checks schema validity, top-k stability across
   repeated runs (Haiku/Sonnet 5.5 reject `temperature`, so there is no temperature 0), and ranking agreement with
   Carson's labels (`evals/labels.csv`, filled over time).
@@ -217,6 +233,8 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
 - `learning.py` (weekly): label posts: positive if paid or ≥ campaign min-payout views within 7 days; negative if
   rejected or < 500 views; write top/bottom 5 to `fewshots`.
 - `reports.py`: weekly digest and monthly report (kill/scale rule status) → bot message + `data/reports/*.md`.
+- `moments.py` (`cf report moments`): fills `posts.views_24h`/`views_72h` from the view snapshot nearest each mark
+  (±6 h; never overwrites), then prints per-archetype performance for re-fitting the moment profile weights.
 
 ### 4.9 scheduler (worker)
 | Job | When (America/New_York) |
