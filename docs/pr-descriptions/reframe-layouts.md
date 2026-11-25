@@ -70,6 +70,8 @@ Made while building it:
     - the captions or hook reach the top or bottom UI zone;
     - geometry is missing.
 
+    - the "Ad" label overlaps the hook box or the caption band.
+
     Layout 1 and 2 manifests keep their old rules. New QA checks: `crop_bounds`, `pan_speed`, `facecam_face`.
 13. **`cf clip relayout`** only accepts `pending_review`. Approved, scheduled, published, rejected and QA-failed clips
     are refused before anything renders. It reuses the New hook / Shorter machinery:
@@ -85,6 +87,15 @@ Made while building it:
 15. **Campaign validation**: `layout: stacked` checks a campaign overlay against the stacked arrangement. Any other
     layout checks it against the default arrangement, which auto, crop and fit fall back to.
 16. **Generic:** nothing in the code knows about any campaign. Boeshi only gets `"layout": "auto"` in its JSON.
+17. **CLAUDE.md** line on game footage updated from "default to the blurred-background fit" to the layout rule (it
+    was no longer true).
+
+### Compliance review
+The compliance-reviewer subagent found no blocking issues. All four of its non-blocking findings were acted on:
+- QA now also checks that the label overlaps neither the hook nor the caption band.
+- A new invariant 10 test covers stacked + tracking + overlay filtergraphs, plus injected audio pads and filters.
+- The COMPLIANCE.md row 3 wording now matches the code.
+- CAMPAIGNS.md says the debug stills are licensed footage: keep them local and delete them after checking.
 
 ### Contract change (`schemas.py`)
 `CampaignIn.layout`, `CampaignIn.facecam_box` (`FacecamBoxPct`, talk + stacked refused); `CropMode.GAME_CROP` /

@@ -333,3 +333,10 @@ def test_every_layout_keeps_label_hook_captions_overlay_and_face_apart(
     for i, a in enumerate(rects):
         for b in rects[i + 1 :]:
             assert not a.intersects(b), (a, b)
+
+
+def test_layout3_label_never_overlaps_the_hook_or_captions() -> None:
+    with pytest.raises(ComplianceError, match="the 'Ad' label overlaps the hook"):
+        assert_render_manifest(_layout3(ad_label_rect=Rect(x0=36, y0=700, x1=132, y1=784)))
+    with pytest.raises(ComplianceError, match="the 'Ad' label overlaps the caption band"):
+        assert_render_manifest(_layout3(ad_label_rect=Rect(x0=36, y0=1200, x1=132, y1=1284)))

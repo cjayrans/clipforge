@@ -460,6 +460,7 @@ def layout_geometry_problems(manifest: RenderManifest) -> list[str]:
     """Invariant 3, label layout 3+ (any of the stacked / crop / fit layouts): the hook box, caption band, "Ad" label,
     campaign overlay and (stacked) the streamer's face are recorded and keep clear of each other:
     - the hook, the "Ad" label and the overlay's visible pixels never cover the face;
+    - the "Ad" label overlaps neither the hook box nor the caption band;
     - the hook, the captions and the "Ad" label never cover the overlay's visible pixels (it stays unobstructed);
     - the captions and the hook stay out of the top and bottom platform UI zones (the label's own UI check is
       `ad_label_placement_problems`)."""
@@ -483,6 +484,11 @@ def layout_geometry_problems(manifest: RenderManifest) -> list[str]:
             problems.append(f"the {name} is under the platform UI (bottom {UI_BOTTOM_PCT:g} %)")
         if rect.intersects(top):
             problems.append(f"the {name} is under the platform UI (top {UI_TOP_PX} px)")
+    label = manifest.ad_label_rect
+    if label is not None:
+        for name, rect in (("hook", hook), ("caption band", captions)):
+            if rect is not None and label.intersects(rect):
+                problems.append(f"the 'Ad' label overlaps the {name}")
     ov = manifest.overlay.opaque_rect if manifest.overlay is not None else None
     if face is not None:
         for name, rect in (("hook", hook), ("'Ad' label", manifest.ad_label_rect), ("campaign overlay", ov)):

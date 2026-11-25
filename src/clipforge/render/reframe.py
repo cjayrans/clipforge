@@ -2,8 +2,9 @@
 
 Pure core: `plan_shot` and `plan_crops` take face detections (from `render.face_detect` or a test fake) and return
 `schemas.CropPlan`. Rules:
-- `content_kind == "game"`: every shot is `fit_blur` and detection is skipped (a facecam in a corner must not drive
-  the crop; captions and the hook carry the clip).
+- `content_kind == "game"`: `plan_crops` gives every shot `fit_blur` and skips detection (a facecam in a corner must
+  not drive a talk-style face crop). Game clips normally use the layouts instead (render.layout, render.clip); this
+  path is their `fit` layout.
 - Per sampled frame, the largest face is the subject (v1). If too few frames have a face → `fit_blur`.
 - If in most face frames the two largest faces' centres are further apart than the crop width → `fit_blur`. The
   second face only counts when its area is at least `SECOND_FACE_MIN_AREA_RATIO` of the largest (a small face in

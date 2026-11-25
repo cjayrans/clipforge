@@ -69,7 +69,8 @@ Everything campaign-specific is data. A new campaign is one JSON file plus its a
      game`. Talk footage keeps the face crop.
    - `facecam_box`: `{"x_pct": .., "y_pct": .., "w_pct": .., "h_pct": ..}` (top-left corner and size in percent of
      the source frame). Only when facecam detection gets it wrong; check what detection found with
-     `cf source facecam <source id> --debug-image <file>.jpg`.
+     `cf source facecam <source id> --debug-image <file>.jpg`. The debug images are frames of the campaign's licensed
+     footage: keep them on this machine, use them only to check the box, and delete them afterwards.
    - `allow_stream_download` (only when the rules say so), `stream_channels` (Twitch logins the footage may come
      from; a VOD is matched on its channel login, a clip on the channel's display name lowercased, so a clip from a
      channel whose display name differs from its login is refused: the safe direction), `max_source_minutes` (download only the first N minutes), `source_urls`.
