@@ -116,11 +116,33 @@ file names Boeshi. **The next campaign is one JSON file plus its assets, with ze
 
 ## Run (private mode; nothing armed or published)
 
-RUN_RESULTS
+`make up` rebuilt both services; both were healthy and both logs said `publish mode private`. Migration 0002 ran on
+the live DB.
+
+1. `docker compose exec worker cf campaign add --from-json campaigns/boeshi-gta6.json` registered campaign 2 and
+   source 2. It printed: "overlay ...: visible area x 266-814, y 541-673 (clear of captions, hook and platform UI);
+   'Ad' label at (48, 120)".
+2. `docker compose exec worker cf run --once`:
+   - **Twitch did not block anything.** yt-dlp fetched the metadata (channel `darealboeshi` matched), then downloaded
+     exactly the first 3600 s in about a minute.
+   - Groq transcribed it (3600 s billed, $0.04).
+   - Haiku scored and Sonnet wrote the copy; 8 candidates were rendered, **0 failed QA, 8 ready for review**.
+   - The bot sent all 8 previews (clips 8–15, between 02:29 and 02:34 UTC).
+3. A read-only check of the 8 real clips (app code inside the worker, numbers only):
+   - Every manifest has the overlay over 0 → end of the clip and the "Ad" label rect at (38–130, 110–190).
+   - Sampled pixels inside the banner match at 0.5 s and at the last frame: the black panel is (0, 0, 0) and the
+     purple panel (145, 82, 255).
+   - The "Ad" label box changes between 0.5 s and 4 s on every clip (mean change 9–100, depending on the background).
+   - Every TikTok and Instagram caption starts with `#ad ` and ends with `twitch.tv/darealboeshi`, with 2–4 hashtags
+     before it.
+4. Spend: the month to date went from $0.08 to $0.17 of the $15 cap.
+5. `make up` again after the last guard fix (the space/hex pad labels), so the containers run this PR's final code.
+
+Nothing was armed, approved or published, and `PUBLISH_MODE` and `.env` were not touched.
 
 ## Verification
 
-- `make lint test`: ruff clean; TEST_COUNTS.
+- `make lint test`: ruff clean; 1278 passed, 12 skipped, 1 deselected.
 - `mypy --strict` on `schemas.py` and `compliance.py`: clean.
 - In the `clipforge:latest` image (Debian ffmpeg 5.1): `tests/render`, `tests/qa` and `tests/compliance` gave
   444 passed, 0 skipped.
@@ -136,7 +158,14 @@ RUN_RESULTS
     - the overlay re-hash before ffmpeg
     - whole-link removal
     - a note on Twitch clip display names
-- compliance-reviewer, pass 2: REVIEW2.
+- compliance-reviewer, pass 2: **PASS** for invariants 1–12. All 36 tests named in the COMPLIANCE.md table are under
+  `tests/compliance/`, and `git diff main -- tests/compliance` only adds lines.
+  - Its remaining non-blocking gap is fixed: pad labels written with a space or in hex (`[ 1:a]`, `[0x1]`) slipped past
+    the pad check. Now any label that starts with a digit after spaces must be exactly `0:v`/`1:v`, and those cases are
+    in `test_overlay_input_pads_and_flags`.
+  - It asked me to note two things. The contract (`schemas.py`) changed, as described above. And
+    `allow_stream_download: true` rests on Carson's summary of the brief (the brief names Boeshi's recent Twitch VODs
+    as the footage), because Claude could not read the Notion page.
 - No test in `tests/compliance/` was weakened; they only gained tests. `tests/test_campaign_files.py`'s rule "required
   tags start with #" now also accepts a link on a campaign without X (the reviewer judged this acceptable).
 - Existing tests updated on purpose: prompt version `clip_copy@1` → `@2` in two places, the prompt-variables test
