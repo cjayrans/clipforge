@@ -186,3 +186,48 @@ def test_flagged_clip_still_waits_for_review_with_a_manual_check_line(
             assert clip.state is ClipState.PENDING_REVIEW  # flagged, not rejected, and not approved
             assert "CHECK BEFORE APPROVING: flagged sexual" in preview_caption(s, pipe_settings, clip)
         assert all(r.review_flags == ["sexual"] for r in s.scalars(select(CandidateRow)))
+
+
+def test_rerank_adds_new_candidates_without_touching_approved_clips(
+    pipe_settings: Settings,
+    db: sessionmaker[Session],
+    deps: PipelineDeps,
+    anthropic: FakeAnthropic,
+    reaction_http: respx.MockRouter,
+) -> None:
+    from clipforge.db import transition
+    from clipforge.ingest.registry import rerank_source
+
+    add_campaign(db, pipe_settings, moment_profile="gta6-streamer")
+    deps = replace(deps, moment_signals=good_signals())
+    assert run_once(pipe_settings, deps=deps).candidates_created == 2
+    with session_scope(db) as s:
+        clip = s.scalars(select(ClipRow).order_by(ClipRow.id)).first()
+        assert clip is not None
+        transition(s, clip, ClipState.APPROVED, actor="operator")
+        approved_id = clip.id
+        used = s.get(CandidateRow, clip.candidate_id)
+        assert used is not None
+        used_window = (used.start_s, used.end_s)
+        before = {r.id: (r.state, r.path) for r in s.scalars(select(ClipRow))}
+
+    with session_scope(db) as s:
+        src = s.scalars(select(SourceRow)).one()
+        rerank_source(s, pipe_settings, src.id)
+        assert src.status is SourceStatus.TRANSCRIBED
+    transcribe_calls = len([r for r in reaction_http.calls if r.request.url.host == "api.groq.com"])
+    report = run_once(pipe_settings, deps=deps)
+
+    assert len([r for r in reaction_http.calls if r.request.url.host == "api.groq.com"]) == transcribe_calls
+    assert report.ranked == 1
+    assert report.downloaded == 0
+    assert report.transcribed == 0
+    with session_scope(db) as s:
+        assert s.scalars(select(SourceRow)).one().status is SourceStatus.RANKED
+        cands = s.scalars(select(CandidateRow).order_by(CandidateRow.id)).all()
+        assert len(cands) == 2 + report.candidates_created  # the old candidates stay as history
+        for new in cands[2:]:
+            assert new.weights_version == "gta6-streamer-v1"
+            assert not (new.start_s < used_window[1] and used_window[0] < new.end_s)
+        after = {r.id: (r.state, r.path) for r in s.scalars(select(ClipRow)) if r.id in before}
+        assert after == {**before, approved_id: (ClipState.APPROVED, before[approved_id][1])}  # no clip changed

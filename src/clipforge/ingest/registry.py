@@ -27,14 +27,23 @@ from sqlalchemy.orm import Session
 
 from clipforge import compliance
 from clipforge.config import Settings
-from clipforge.db import CampaignRow, SourceRow, record_event
+from clipforge.db import CampaignRow, CandidateRow, SourceRow, TranscriptRow, record_event, transition
 from clipforge.ingest import alerts
 from clipforge.ingest.folders import FolderListError, list_gdrive_folder
 from clipforge.ingest.models import campaign_from_row, campaign_row_values, set_source_status
 from clipforge.rank.profile import ProfileError, load_profile
 from clipforge.render import campaign_overlay
 from clipforge.render.assets import project_root
-from clipforge.schemas import CampaignIn, CampaignStatus, Platform, QACheck, SourceHost, SourceStatus, slugify
+from clipforge.schemas import (
+    CampaignIn,
+    CampaignStatus,
+    ClipState,
+    Platform,
+    QACheck,
+    SourceHost,
+    SourceStatus,
+    slugify,
+)
 
 log = logging.getLogger(__name__)
 console = Console(highlight=False)
@@ -456,4 +465,43 @@ def retry_source(session: Session, settings: Settings | None, source_id: int) ->
         )
     elif reason == "no_speech":
         console.print("[yellow]a no-speech source will be transcribed again (paid) and will likely fail again[/yellow]")
+    return source
+
+
+def rerank_source(session: Session, settings: Settings | None, source_id: int) -> SourceRow:
+    """`cf source rerank <id>`: run only the ranking stage again on an already ranked source.
+
+    The source goes RANKED -> TRANSCRIBED through `set_source_status` (events row, actor operator), so the next nightly
+    run reuses the existing download and transcript and only ranks again; nothing is downloaded or transcribed.
+    Allowed only for a ranked source of an active campaign that still has a transcript; anything else is refused.
+
+    Existing candidates and clips are history and are never altered or re-rendered. The one exception is a
+    candidate that was never rendered (still CANDIDATE): it is expired (events row), so the re-rank's new candidates
+    are rendered instead of stale ones. The new candidates carry the current weights version, and the ranker never
+    proposes a window that overlaps a clip that is approved, scheduled or published.
+    """
+    source = session.get(SourceRow, source_id)
+    if source is None:
+        raise RegistryError(f"no source with id {source_id}")
+    if source.status is not SourceStatus.RANKED:
+        raise RegistryError(f"source {source.id} is {source.status.value}; only ranked sources can be re-ranked")
+    campaign = get_campaign(session, source.campaign_id)
+    if campaign.status is not CampaignStatus.ACTIVE:
+        raise RegistryError(
+            f"campaign {campaign.id} is {campaign.status.value}; only active campaigns can be re-ranked"
+        )
+    if session.scalar(select(TranscriptRow.id).where(TranscriptRow.source_id == source.id).limit(1)) is None:
+        raise RegistryError(f"source {source.id} has no transcript to rank")
+    stale = list(
+        session.scalars(
+            select(CandidateRow).where(CandidateRow.source_id == source.id, CandidateRow.state == ClipState.CANDIDATE)
+        )
+    )
+    for cand in stale:
+        transition(session, cand, ClipState.EXPIRED, actor="operator", detail="superseded by re-rank")
+    set_source_status(session, source, SourceStatus.TRANSCRIBED, actor="operator", detail="re-rank requested")
+    console.print(
+        f"source {source.id}: ranked -> transcribed; the next nightly run ranks it again "
+        f"({len(stale)} unrendered candidate(s) expired)"
+    )
     return source
