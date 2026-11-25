@@ -39,7 +39,7 @@ def test_style_notes_in_brief_and_prompt_names_no_campaign():
     assert f"Style for this campaign: {STYLE}" in brief
     assert "Style for this campaign" not in campaign_brief(campaign_in())  # optional
     prompt = load_prompt("clip_copy")
-    assert prompt.version == "2"
+    assert prompt.version == "3"
     text = (prompt.system + prompt.user).lower()
     for name in _campaign_words():
         assert name not in text, name  # the prompt is campaign-generic: no campaign's name, channel or tag

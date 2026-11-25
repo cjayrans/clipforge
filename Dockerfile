@@ -41,7 +41,7 @@ from zoneinfo import ZoneInfo; ZoneInfo('America/New_York'); print('imports ok, 
     && python -c "from clipforge.render.assets import missing_fonts, face_model_path; \
 assert not missing_fonts(['Montserrat-ExtraBold', 'Inter-Bold', 'Inter-Black']), 'fonts missing'; \
 assert face_model_path().is_file(), 'face model missing'; \
-from clipforge.rank.prompts import load_prompt; load_prompt('score_windows'); load_prompt('clip_copy'); \
+from clipforge.rank.prompts import load_prompt; load_prompt('score_windows'); load_prompt('clip_copy'); load_prompt('score_moments'); \
 print('assets and prompts ok')"
 
 RUN useradd --create-home --uid 1000 clipforge \
