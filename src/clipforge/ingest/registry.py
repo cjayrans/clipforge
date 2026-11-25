@@ -31,6 +31,7 @@ from clipforge.db import CampaignRow, SourceRow, record_event
 from clipforge.ingest import alerts
 from clipforge.ingest.folders import FolderListError, list_gdrive_folder
 from clipforge.ingest.models import campaign_from_row, campaign_row_values, set_source_status
+from clipforge.rank.profile import ProfileError, load_profile
 from clipforge.render import campaign_overlay
 from clipforge.render.assets import project_root
 from clipforge.schemas import CampaignIn, CampaignStatus, Platform, QACheck, SourceHost, SourceStatus, slugify
@@ -85,7 +86,14 @@ def validate_campaign_setup(campaign: CampaignIn, settings: Settings) -> None:
       link) cannot list X.
     - Invariant 3 / overlay: the overlay file exists, is an RGBA PNG under campaigns/assets/, and its visible part
       misses the captions, the hook, the platform UI zones, and leaves a spot for the "Ad" label.
+    - Moment profile: the named file in config/moment_profiles/ exists and is valid.
     """
+    if campaign.moment_profile is not None:
+        try:
+            profile = load_profile(campaign.moment_profile)
+        except ProfileError as exc:
+            raise RegistryError(f"moment_profile: {exc}") from exc
+        console.print(f"moment profile {profile.name} ({profile.weights_version}): {', '.join(profile.archetype_ids)}")
     url_tags = [t for t in campaign.required_tags if compliance.contains_url(t)]
     if url_tags and Platform.X in campaign.allowed_platforms:
         raise RegistryError(

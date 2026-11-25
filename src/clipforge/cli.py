@@ -65,6 +65,7 @@ TARGETS: dict[str, Target] = {
     "worker": Target("scheduler.worker", "run_worker", "Phase 1 D (feat/ops)"),
     "bot": Target("review.bot", "run_bot", "Phase 1 D (feat/ops)"),
     "report weekly": Target("track.reports", "weekly_report", "Phase 1 D (feat/ops)"),
+    "report moments": Target("track.moments", "moments_report", "feat/moment-selection"),
     "export-reconcile": Target("track.reconcile", "export_csv", "Phase 1 D (feat/ops)"),
     "import-reconcile": Target("track.reconcile", "import_csv", "Phase 1 D (feat/ops)"),
     "run --once": Target("pipeline", "run_once", "Phase 2 (P2.2)"),
@@ -271,6 +272,12 @@ def report_weekly(ctx: typer.Context) -> None:
     path = _delegate(ctx, "report weekly")
     if path is not None:
         typer.echo(str(path))
+
+
+@report_app.command("moments")
+def report_moments(ctx: typer.Context) -> None:
+    """Per-archetype performance of moment-ranked clips (fills due 24 h / 72 h views from snapshots first)."""
+    _delegate(ctx, "report moments")
 
 
 @app.command("export-reconcile")

@@ -157,3 +157,59 @@ def test_0002_upgrades_a_database_with_rows(tmp_path: Path) -> None:
         cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(candidates)")}
         assert "hook_history" in cols
     engine.dispose()
+
+
+def test_0003_adds_moment_columns_and_leaves_approved_clips_alone(tmp_path: Path) -> None:
+    """Moment selection only adds nullable columns: an approved clip and its candidate keep every value."""
+    db = tmp_path / "old.db"
+    url = f"sqlite:///{db}"
+    upgrade(url, "0002")
+    ts = "'2026-11-22 00:00:00'"
+    con = sqlite3.connect(db)
+    con.execute(
+        "INSERT INTO campaigns (slug, platform_marketplace, name, url, submission_url, cpm_usd, min_payout_usd,"
+        " min_views_per_post, allowed_platforms, required_tags, disclosure_text, rules_notes, is_political, priority,"
+        " source_urls, content_kind, footage_mode, allow_stream_download, cpm_by_platform, min_payout_by_platform,"
+        " unpaid_viewer_countries, copy_style_notes, stream_channels, status, created_at, updated_at)"
+        " VALUES ('old', 'content_rewards', 'Old', 'https://e/a', 'https://e/a', 1.0, 0, 0, '[\"tiktok\"]', '[]',"
+        f" '#ad', '', 0, 0, '[]', 'game', 'supplied', 0, '{{}}', '{{}}', '[]', '', '[]', 'active', {ts}, {ts})"
+    )
+    con.execute(
+        f"INSERT INTO sources (campaign_id, url, status, created_at) VALUES (1, 'https://e/v.mp4', 'ranked', {ts})"
+    )
+    con.execute(
+        "INSERT INTO candidates (source_id, start_s, end_s, score, standalone, brief_ok, reasons, prompt_version,"
+        f" state, hook, hook_history, created_at) VALUES (1, 10, 40, 77, 1, 1, 'old', 'score_windows@1', 'rendered',"
+        f" 'old hook', '[]', {ts})"
+    )
+    con.execute(
+        "INSERT INTO clips (candidate_id, account_set, style_preset, path, duration_s, sha256, state, rendered_at,"
+        f" created_at) VALUES (1, 'gaming-1', 'bold-yellow', '/x.mp4', 30, 'abc', 'approved', {ts}, {ts})"
+    )
+    con.commit()
+    before = {t: con.execute(f"SELECT * FROM {t}").fetchall() for t in ("candidates", "clips")}  # noqa: S608
+    con.close()
+
+    upgrade(url)
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    cand = con.execute("SELECT * FROM candidates").fetchone()
+    clip = con.execute("SELECT * FROM clips").fetchone()
+    assert clip["state"] == "approved"
+    assert cand["score"] == 77
+    assert cand["hook"] == "old hook"
+    for col in (
+        "archetype",
+        "weights_version",
+        "moment_profile",
+        "score_reaction",
+        "gate_results_json",
+        "review_flags",
+    ):
+        assert cand[col] is None, col
+    assert con.execute("SELECT moment_profile FROM campaigns").fetchone()[0] is None
+    post_cols = {r[1] for r in con.execute("PRAGMA table_info(posts)")}
+    assert {"views_24h", "views_72h"} <= post_cols
+    after = {t: [tuple(r)[: len(before[t][0])] for r in con.execute(f"SELECT * FROM {t}")] for t in before}  # noqa: S608
+    con.close()
+    assert after == before  # every old column keeps its value

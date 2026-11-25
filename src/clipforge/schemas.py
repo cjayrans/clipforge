@@ -251,6 +251,9 @@ class CampaignIn(BaseModel):
     max_source_minutes: int | None = Field(
         default=None, ge=1, description="Download only the first N minutes of a stream source (Twitch)."
     )
+    # Added for moment selection (docs/research/clipping-gta6-moment-types.md): the name of a file in
+    # config/moment_profiles/ (archetypes, weights, gates, window rules). None keeps the transcript-window ranker.
+    moment_profile: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
     @model_validator(mode="before")
     @classmethod
@@ -404,6 +407,36 @@ class ClipCopy(BaseModel):
         return self
 
 
+class GateResult(BaseModel):
+    """Added for moment selection: one gate a moment candidate went through. `passed` None = not evaluated (the
+    signal it needs was unavailable)."""
+
+    name: str
+    passed: bool | None
+    detail: str = ""
+
+
+class MomentScore(BaseModel):
+    """Added for moment selection: how the moment ranker judged a candidate (stored per candidate for calibration).
+
+    The four scores are 0-10; `weighted` is the profile-weighted sum on a 0-100 scale after skip-rule penalties.
+    `review_flags` are content flags (e.g. sexual, graphic) shown on the Telegram preview: never an auto-reject.
+    """
+
+    profile: str
+    weights_version: str
+    archetype: str
+    reaction: int = Field(ge=0, le=10)
+    event: int = Field(ge=0, le=10)
+    setup: int = Field(ge=0, le=10)
+    absurdity: int = Field(ge=0, le=10)
+    weighted: float = Field(ge=0, le=100)
+    reason: str = Field(default="", max_length=300)
+    skip_flags: list[str] = Field(default_factory=list)
+    review_flags: list[str] = Field(default_factory=list)
+    gates: list[GateResult] = Field(default_factory=list)
+
+
 class Candidate(BaseModel):
     id: int | None = None
     source_id: int
@@ -416,6 +449,7 @@ class Candidate(BaseModel):
     copy_: ClipCopy | None = Field(default=None, alias="copy")
     prompt_version: str
     state: ClipState = ClipState.CANDIDATE
+    moment: MomentScore | None = None  # set by the moment ranker only
 
 
 # --------------------------------------------------------------------------------------------------

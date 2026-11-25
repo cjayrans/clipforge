@@ -1,0 +1,133 @@
+# Moment profile for streamer-VOD GTA 6 campaigns (Boeshi first). Loaded by clipforge.rank.profile.
+# Source: docs/research/clipping-gta6-moment-types.md (launch-week evidence, 24 Nov 2026). Weights and thresholds are
+# starting guesses, not fitted: re-fit after the first 20-30 posted clips (`cf report moments`) and bump
+# weights_version whenever weights, gates or archetypes change.
+name: gta6-streamer
+weights_version: gta6-streamer-v1
+description: Streamer playing GTA 6. Views follow a visible reaction to something going wrong, absurd or escalating.
+
+ranker_notes: >-
+  The footage is a streamer playing GTA 6 (Grand Theft Auto VI), usually with a face cam and live chat. The
+  biggest on-screen moment is rarely the clip; the streamer's reaction is. Walking, driving, exploring, menus,
+  loading screens and talk about settings with no event are boring. A stranger scrolling past must get the setup
+  in the first 2-3 seconds. English-language moments that need no knowledge of the stream travel best.
+
+archetypes:
+  - id: blunder
+    label: Streamer blunder with a big reaction
+    description: The streamer causes their own loss (misclick, wrong button, deleting a save, powering off, buying
+      the wrong thing, killing themselves) and reacts big. Strongest evidence of all types.
+  - id: shock
+    label: Shock or disbelief
+    description: A first look at something new, a speechless pause, a sudden wanted level, a jump scare, "is that
+      real?" disbelief.
+  - id: npc_weirdness
+    label: NPC weirdness
+    description: An NPC does something unscripted, odd or funny and the streamer calls it out ("look at this guy").
+  - id: glitch
+    label: Glitch or physics fail
+    description: A glitch, ragdoll, flying car, vanishing character or physics fail, with rage or disbelief.
+  - id: chaos
+    label: Escalation and chaos
+    description: Things escalate fast (police chase turns, crash, explosion, flight gone wrong, boat death, WASTED
+      or BUSTED screen).
+  - id: chat_interplay
+    label: Chat interplay
+    description: Chat warns and the streamer ignores it, chat gives bad advice, or a chat message lands at the
+      wrong moment.
+  - id: other
+    label: Other
+    description: Anything else worth a clip (a funny line, a clutch play) that fits none of the above.
+
+weights:
+  reaction: 0.35
+  event: 0.25
+  setup: 0.25
+  absurdity: 0.15
+
+window:
+  pre_roll_min_s: 2
+  pre_roll_s: 3
+  pre_roll_max_s: 5
+  post_roll_s: 1.5
+  min_s: 12
+  target_max_s: 35
+  max_s: 45
+  chain_gap_s: 4
+
+signals:
+  baseline_s: 60
+  loud_z: 2.0
+  motion_z: 2.5
+  motion_min_diff: 4.0
+  silence_beat_s: 1.2
+  silence_reaction_s: 1.5
+  motion_keyframes_only: true
+  motion_sample_fps: 2
+
+lexicon:
+  exclamations: ["no", nooo, what, bro, bruh, why, nah, dude, yo, wow, whoa, huh, stop, dang, damn, hello, ayo, yikes]
+  exclamation_phrases:
+    - oh my god
+    - oh my gosh
+    - oh no
+    - no way
+    - what the
+    - are you serious
+    - are you kidding
+    - let's go
+    - hell no
+    - what was that
+    - what is that
+    - what just happened
+    - i'm dead
+    - get out
+  laughter_patterns:
+    - '^(ha){2,}h?$'
+    - '^(he){2,}$'
+    - '^(ah){3,}$'
+    - '^l+o+l+$'
+    - '^lmf?ao+$'
+    - '^\(?laugh(s|ing|ter)?\)?$'
+  cues: [look at, look at this, watch this, wait, hold on, is that, did you see, what is he doing, what is she doing]
+  chat: [chat, chatter, chatters, mods]
+  sensitive: [strip club, stripper, lap dance, private dance, naked, nude, boobs, gore, decapitated]
+
+gates:
+  reaction_within_s: 3
+  reaction_lead_s: 0.5
+  min_audio_std_db: 3.0
+  max_candidates: 40
+  min_score: 40
+
+# Rockstar's policy on posting copyrighted material (updated 10 Jan 2025): the ending, big story reveals, isolated
+# cutscenes and in-game TV or comedy shown on their own are removed; cutscenes inside a larger playthrough are allowed.
+skip_rules:
+  - id: cutscene
+    label: Mostly cutscene
+    description: Most of the window is a cutscene or scripted story scene, without the streamer's own reaction
+      carrying it.
+    action: reject
+  - id: story_reveal
+    label: Ending or story reveal
+    description: The game's ending, end credits, or a major story reveal or twist (a spoiler).
+    action: reject
+  - id: media_alone
+    label: In-game show played alone
+    description: An in-game TV show, radio bit, ad or comedy act playing on its own, where the clip would be the
+      game's own content rather than the streamer's moment.
+    action: reject
+  - id: cutscene_part
+    label: Partly cutscene
+    description: A cutscene takes up a large part of the window, but the streamer's reaction is the point.
+    action: penalize
+    penalty: 0.6
+
+# Never an auto-reject: the clip is scored on the blunder and reaction, and the Telegram preview asks for a manual check.
+review_flags:
+  - id: sexual
+    label: Sexual content
+    description: Sexual content or nudity on screen or in speech (strip club, lap dance, private dance).
+  - id: graphic
+    label: Graphic content
+    description: Graphic violence or gore beyond ordinary GTA action.

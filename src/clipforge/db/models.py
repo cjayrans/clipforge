@@ -165,6 +165,7 @@ class CampaignRow(Base):
     copy_style_notes: Mapped[str] = mapped_column(Text, default="")
     stream_channels: Mapped[list[Any]] = mapped_column(JSON, default=list)
     max_source_minutes: Mapped[int | None] = mapped_column(Integer)
+    moment_profile: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[CampaignStatus] = mapped_column(
         _enum(CampaignStatus, "campaign_status"), default=CampaignStatus.ACTIVE
     )
@@ -221,6 +222,17 @@ class CandidateRow(Base):
     hook_history: Mapped[list[Any]] = mapped_column(JSON, default=list)
     prompt_version: Mapped[str] = mapped_column(String(64))
     state: Mapped[ClipState] = mapped_column(_enum(ClipState, "candidate_state"), default=ClipState.CANDIDATE)
+    # Moment ranker calibration (migration 0003). All null for transcript-window candidates and older rows.
+    moment_profile: Mapped[str | None] = mapped_column(String(64))
+    weights_version: Mapped[str | None] = mapped_column(String(64))
+    archetype: Mapped[str | None] = mapped_column(String(32), index=True)
+    score_reaction: Mapped[int | None] = mapped_column(Integer)
+    score_event: Mapped[int | None] = mapped_column(Integer)
+    score_setup: Mapped[int | None] = mapped_column(Integer)
+    score_absurdity: Mapped[int | None] = mapped_column(Integer)
+    gate_results_json: Mapped[list[Any] | None] = mapped_column(JSON)
+    skip_flags: Mapped[list[Any] | None] = mapped_column(JSON)
+    review_flags: Mapped[list[Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     @validates("state")
@@ -293,6 +305,9 @@ class PostRow(Base):
     state: Mapped[PostState] = mapped_column(_enum(PostState, "post_state"), default=PostState.QUEUED)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    # Views 24 h and 72 h after publishing (migration 0003), for moment-ranker calibration; filled later.
+    views_24h: Mapped[int | None] = mapped_column(Integer)
+    views_72h: Mapped[int | None] = mapped_column(Integer)
 
     @validates("state")
     def _check_state(self, _key: str, value: PostState | str) -> PostState:

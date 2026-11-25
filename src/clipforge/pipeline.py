@@ -77,8 +77,12 @@ from clipforge.qa.checks import qa_clip
 from clipforge.qa.preview import TELEGRAM_VIDEO_LIMIT_BYTES, preview_for_telegram
 from clipforge.qa.probe import ProbeError, ProbeResult, probe
 from clipforge.rank.claude_client import ClaudeClient, RankError
-from clipforge.rank.copy import rank_source, write_copy
-from clipforge.rank.prompts import PromptError, load_fewshots
+from clipforge.rank.copy import RankResult, rank_source, write_copy
+from clipforge.rank.media_signals import MediaSignals
+from clipforge.rank.media_signals import extract as extract_media_signals
+from clipforge.rank.moment_score import rank_moments
+from clipforge.rank.profile import MomentProfile, ProfileError, SignalRules, load_profile
+from clipforge.rank.prompts import Fewshot, PromptError, load_fewshots
 from clipforge.rank.select import shorter_range, text_between
 from clipforge.render.assets import AssetNotFoundError
 from clipforge.render.clip import ClipRequest, render_candidate
@@ -90,6 +94,8 @@ from clipforge.schemas import (
     CampaignStatus,
     Candidate,
     ClipState,
+    GateResult,
+    MomentScore,
     Platform,
     QACheck,
     QAReport,
@@ -123,6 +129,7 @@ STRANDED_AFTER = timedelta(hours=1)  # a clip left RENDERED longer than this by 
 
 
 RenderFn = Callable[[ClipRequest], RenderManifest]
+MomentSignalsFn = Callable[[Path, SignalRules], MediaSignals]
 
 
 @dataclass
@@ -140,6 +147,7 @@ class PipelineDeps:
     qa_probe: Callable[[Path], ProbeResult] = probe
     preview_fn: Callable[[Path], Path] = preview_for_telegram
     clock: Callable[[], datetime] = utcnow
+    moment_signals: MomentSignalsFn | None = None  # None: ffmpeg loudness + motion passes (rank/media_signals.py)
 
 
 @dataclass
@@ -220,6 +228,47 @@ def _latest_transcript(session: Session, source_id: int) -> Transcript:
     return load_transcript(row.words_json_path)
 
 
+def moment_from_row(row: CandidateRow) -> MomentScore | None:
+    """The stored moment-ranker judgement of a candidate, or None for transcript-window candidates."""
+    if row.archetype is None or row.moment_profile is None or row.weights_version is None:
+        return None
+    reason = row.reasons
+    if reason.startswith(f"[{row.archetype}] "):
+        reason = reason[len(row.archetype) + 3 :]
+    return MomentScore(
+        profile=row.moment_profile,
+        weights_version=row.weights_version,
+        archetype=row.archetype,
+        reaction=row.score_reaction or 0,
+        event=row.score_event or 0,
+        setup=row.score_setup or 0,
+        absurdity=row.score_absurdity or 0,
+        weighted=float(min(max(row.score, 0), 100)),
+        reason=reason[:300],
+        skip_flags=[str(x) for x in row.skip_flags or []],
+        review_flags=[str(x) for x in row.review_flags or []],
+        gates=[GateResult.model_validate(g) for g in row.gate_results_json or [] if isinstance(g, dict)],
+    )
+
+
+def moment_columns(moment: MomentScore | None) -> dict[str, Any]:
+    """CandidateRow column values for a moment judgement (all None without one)."""
+    if moment is None:
+        return {}
+    return {
+        "moment_profile": moment.profile,
+        "weights_version": moment.weights_version,
+        "archetype": moment.archetype,
+        "score_reaction": moment.reaction,
+        "score_event": moment.event,
+        "score_setup": moment.setup,
+        "score_absurdity": moment.absurdity,
+        "gate_results_json": [g.model_dump(mode="json") for g in moment.gates],
+        "skip_flags": list(moment.skip_flags),
+        "review_flags": list(moment.review_flags),
+    }
+
+
 def _candidate_model(row: CandidateRow) -> Candidate:
     return Candidate(
         id=row.id,
@@ -232,6 +281,7 @@ def _candidate_model(row: CandidateRow) -> Candidate:
         reasons=row.reasons,
         prompt_version=row.prompt_version,
         state=row.state,
+        moment=moment_from_row(row),
     )
 
 
@@ -543,6 +593,15 @@ class Pipeline:
             campaign = campaign_model(camp_row)
             transcript = _latest_transcript(s, source_id)
             fewshots = load_fewshots(s)
+            local_path = Path(src.local_path) if src.local_path else None
+        profile: MomentProfile | None = None
+        if campaign.moment_profile is not None:
+            try:
+                profile = load_profile(campaign.moment_profile)
+            except ProfileError as exc:
+                with session_scope(self.factory) as s:
+                    alerts.raise_alert(s, alerts.RANK_EMPTY, source_id, f"source {source_id}: {exc}"[:1000])
+                raise _StageFailed(f"rank: {exc}") from exc
         picked = account_for(self.settings, campaign)
         if picked is None:
             with session_scope(self.factory) as s:
@@ -558,7 +617,10 @@ class Pipeline:
         try:
             if self._claude is None:
                 self._claude = _build_claude(self.settings, self.factory, self.deps)
-            result = rank_source(transcript, campaign, account.platforms, client=self._claude, fewshots=fewshots)
+            if profile is None:
+                result = rank_source(transcript, campaign, account.platforms, client=self._claude, fewshots=fewshots)
+            else:
+                result = self._rank_moments(transcript, campaign, account.platforms, profile, fewshots, local_path)
         except (RankError, PromptError, ComplianceError) as exc:
             with session_scope(self.factory) as s:
                 alerts.raise_alert(
@@ -583,21 +645,54 @@ class Pipeline:
                     title=copy.youtube_title,
                     captions_json={c.platform.value: c.text for c in copy.captions},
                     prompt_version=cand.prompt_version,
+                    **moment_columns(cand.moment),
                 )
                 s.add(row)
                 s.flush()
-                record_event(
-                    s, "candidate", row.id, None, ClipState.CANDIDATE.value, detail=f"score {cand.score}, {row.hook}"
-                )
-            detail = (
-                f"{len(result.candidates)} candidate(s) from {result.windows_built} windows; "
-                f"{len(result.score.failed_batches)} failed batch(es), {len(result.copy_failures)} copy failure(s)"
-            )
-            set_source_status(s, src, SourceStatus.RANKED, detail=detail)
+                what = f"score {cand.score}" + (f", {cand.moment.archetype}" if cand.moment else "")
+                record_event(s, "candidate", row.id, None, ClipState.CANDIDATE.value, detail=f"{what}, {row.hook}")
+            set_source_status(s, src, SourceStatus.RANKED, detail=result.detail()[:1000])
             if not result.candidates:
                 alerts.raise_alert(s, alerts.RANK_EMPTY, source_id, f"source {source_id} produced no candidates")
         self.report.ranked += 1
         self.report.candidates_created += len(result.candidates)
+
+    def _rank_moments(
+        self,
+        transcript: Transcript,
+        campaign: Campaign,
+        platforms: list[Platform],
+        profile: MomentProfile,
+        fewshots: list[Fewshot],
+        local_path: Path | None,
+    ) -> RankResult:
+        """Loudness/motion signals (cheap ffmpeg passes, no DB session held), then the moment ranker. Missing or
+        failed media signals are not fatal: the ranker runs on the transcript and the gates record it."""
+        signals = MediaSignals()
+        if local_path is None or not local_path.is_file():
+            signals.problems.append("source media is not on disk")
+        else:
+            fn = self.deps.moment_signals
+            if fn is None:
+                runner = self.deps.media_runner
+
+                def fn(path: Path, rules: SignalRules) -> MediaSignals:
+                    return extract_media_signals(path, rules, runner)
+
+            signals = fn(local_path, profile.signals)
+        for problem in signals.problems:
+            self._problem(f"moment signals for source {transcript.source_id}: {problem}")
+        assert self._claude is not None
+        return rank_moments(
+            transcript,
+            campaign,
+            platforms,
+            profile,
+            client=self._claude,
+            fewshots=fewshots,
+            loudness_db=signals.loudness_db,
+            motion=signals.motion,
+        )
 
     # -- render ---------------------------------------------------------------------------------
 

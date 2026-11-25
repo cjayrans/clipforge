@@ -55,7 +55,26 @@ def test_repo_prompts_load_with_versions():
         ("score_windows", {"campaign_brief", "fewshots", "n_windows", "windows"}),
         (
             "clip_copy",
-            {"campaign_brief", "fewshots", "avoid_hooks", "platforms", "start_s", "end_s", "duration_s", "clip_text"},
+            {
+                "campaign_brief",
+                "fewshots",
+                "avoid_hooks",
+                "platforms",
+                "start_s",
+                "end_s",
+                "duration_s",
+                "clip_text",
+                "moment_note",
+            },
+        ),
+        (
+            "score_moments",
+            {
+                "campaign_brief",
+                "fewshots",
+                "n_candidates",
+                "candidates",
+            },  # system variables: tests/rank/test_moment_score.py
         ),
     ],
 )

@@ -17,19 +17,32 @@ from clipforge.schemas import ClipState, Slot
 
 
 def preview_caption(session: Session, settings: Settings, clip: ClipRow) -> str:
-    """Caption under a review video: campaign, score, hook, platforms, duration."""
+    """Caption under a review video: campaign, score, hook, platforms, duration; for moment-ranked clips also the
+    archetype and the four scores, and a manual-check line when the ranker flagged the content (never auto-rejected).
+    """
     lin = lineage(session, clip)
     campaign = campaign_model(lin.campaign)
     account = settings.app.account_sets.get(clip.account_set)
     platforms = allowed_platforms(campaign, account.platforms if account else None)
     names = ", ".join(p.value for p in platforms) or "no platform"
-    return "\n".join(
-        [
-            f"Clip {clip.id} - {campaign.name}",
-            f"Score {lin.candidate.score} | {clip.duration_s:.0f}s | {names}",
-            f"Hook: {lin.candidate.hook or '(none)'}",
-        ]
-    )
+    cand = lin.candidate
+    lines = [
+        f"Clip {clip.id} - {campaign.name}",
+        f"Score {cand.score} | {clip.duration_s:.0f}s | {names}",
+        f"Hook: {cand.hook or '(none)'}",
+    ]
+    if cand.archetype:
+        lines.append(
+            f"Moment: {cand.archetype} | reaction {cand.score_reaction}, event {cand.score_event}, "
+            f"setup {cand.score_setup}, absurdity {cand.score_absurdity}"
+        )
+    skips = [str(f) for f in cand.skip_flags or []]
+    if skips:  # only penalising skip rules reach review; rejecting ones drop the candidate
+        lines.append(f"Skip rules (score lowered): {', '.join(skips)}")
+    flags = [str(f) for f in cand.review_flags or []]
+    if flags:
+        lines.append(f"CHECK BEFORE APPROVING: flagged {'; '.join(flags)}")
+    return "\n".join(lines)
 
 
 def _counts(pairs: list[tuple[object, int]]) -> str:

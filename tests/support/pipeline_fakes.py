@@ -18,6 +18,7 @@ from clipforge.qa.probe import ProbeResult
 from clipforge.render.reframe import FaceBox
 from clipforge.render.shots import Shot
 from tests.rank.anthropic_mock import FakeAnthropic, json_text
+from tests.rank.moment_fakes import echo_moments
 from tests.rank.test_score import echo_scores
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -130,6 +131,8 @@ def fake_anthropic(hooks: Sequence[str] = ()) -> FakeAnthropic:
 
     def respond(body: dict[str, Any]) -> httpx2.Response:
         if body.get("tools"):
+            if body["tools"][0]["name"] == "score_moments":
+                return echo_moments()(body)
             return echo_scores(body)
         hook = queue.pop(0) if queue else "He tried jumping to a helicopter"
         return json_text(copy_payload(hook))

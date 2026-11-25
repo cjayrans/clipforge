@@ -94,3 +94,12 @@ def test_campaign_without_new_fields_registers_as_before(session: Session, setti
 def test_null_unknown_minimums_are_stored_as_zero() -> None:
     c = campaign_in(min_payout_usd=None, min_views_per_post=None)
     assert (c.min_payout_usd, c.min_views_per_post) == (0.0, 0)
+
+
+def test_moment_profile_is_checked_and_stored(session: Session, settings: Settings, tmp_path: Path) -> None:
+    with pytest.raises(RegistryError, match="moment_profile: moment profile not found"):
+        registry.add_campaign_from_json(session, settings, _json(tmp_path, moment_profile="no-such-profile"))
+    assert session.scalars(select(CampaignRow)).first() is None
+    row = registry.add_campaign_from_json(session, settings, _json(tmp_path, moment_profile="gta6-streamer"))
+    assert row.moment_profile == "gta6-streamer"
+    assert campaign_from_row(row).moment_profile == "gta6-streamer"

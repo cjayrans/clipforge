@@ -133,12 +133,18 @@ def write_copy(
     avoid_hooks: Sequence[str] = (),
     prompt: Prompt | None = None,
     model: str | None = None,
+    moment: str | None = None,
 ) -> ClipCopy:
     """Hook, title and normalised captions for one candidate, for the platforms this campaign × account allows.
 
     `avoid_hooks` ("New hook"): hooks this clip already had. They go into the prompt, and a reply that repeats one
     (ignoring case and punctuation) is retried once with a reminder, then refused with RepeatedHookError.
+
+    `moment`: what the moment ranker thinks happens (game footage often says little in words). None uses the
+    candidate's own moment reason, so a "New hook" re-render gets it too.
     """
+    if moment is None:
+        moment = f"{candidate.moment.archetype}: {candidate.moment.reason}" if candidate.moment else ""
     allowed = compliance.allowed_platforms(campaign, platforms)
     if not allowed:
         raise RankError(f"campaign {campaign.name!r} allows none of {[p.value for p in platforms]}")
@@ -152,6 +158,7 @@ def write_copy(
         end_s=f"{candidate.end_s:.1f}",
         duration_s=f"{candidate.end_s - candidate.start_s:.1f}",
         clip_text=escape_text(clip_text),
+        moment_note=escape_text(moment.strip()) or "(not available)",
     )
     attempts = HOOK_ATTEMPTS if avoid_hooks else 1
     copy: ClipCopy | None = None
@@ -184,6 +191,17 @@ class RankResult:
     windows_built: int = 0
     copy_failures: list[str] = field(default_factory=list)
     prompt_version: str = ""
+    failed_batches: list[str] = field(default_factory=list)  # moment ranker; the window ranker uses score
+    detail_extra: str = ""  # moment ranker: signal and gate counts
+
+    def detail(self) -> str:
+        """The source's RANKED event detail."""
+        failed = len(self.failed_batches) + len(self.score.failed_batches)
+        text = (
+            f"{len(self.candidates)} candidate(s) from {self.windows_built} windows; "
+            f"{failed} failed batch(es), {len(self.copy_failures)} copy failure(s)"
+        )
+        return f"{text}; {self.detail_extra}" if self.detail_extra else text
 
 
 def rank_source(
