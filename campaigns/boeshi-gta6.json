@@ -21,6 +21,7 @@
   "max_source_minutes": 60,
   "source_urls": ["https://www.twitch.tv/videos/2939185858"],
   "required_caption_tags": ["twitch.tv/darealboeshi"],
+  "moment_profile": "gta6-streamer",
   "copy_style_notes": "Humor and meme tone: voice-joke bits, relatable captions, chad-edit energy. Funny and punchy, never mean, never misleading.",
   "overlay": {
     "path": "campaigns/assets/boeshi/Boeshi Overlay.png",

@@ -54,6 +54,9 @@ Everything campaign-specific is data. A new campaign is one JSON file plus its a
      `["#Tag"]` or a channel link like `["twitch.tv/<channel>"]`. A link cannot be combined with `x` in
      `allowed_platforms` (X captions carry no URLs); `cf campaign add` refuses it.
    - `copy_style_notes`: the tone the brief asks for (e.g. humor/meme); fed to the hook/caption prompt.
+   - `moment_profile`: name of a file in `config/moment_profiles/` (e.g. `gta6-streamer`) for streamer/game footage.
+     The moment ranker then picks reaction moments by archetype instead of transcript windows. `cf campaign add`
+     refuses an unknown or invalid profile. Leave it out for talk content.
    - `overlay`: `{"path": "campaigns/assets/<slug>/<file>.png", "position": {"x_pct": 50, "y_pct": 31.5},
      "scale": 0.6, "full_duration": true}`. The PNG needs an alpha channel. `cf campaign add` prints where its
      visible part lands and refuses a placement that would cover the captions, the hook, the platform UI (top
