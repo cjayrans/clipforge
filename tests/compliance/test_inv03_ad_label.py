@@ -9,7 +9,7 @@ import pytest
 
 from clipforge.compliance import ComplianceError, assert_render_manifest, render_manifest_problems
 from clipforge.config import AppConfig
-from clipforge.schemas import CampaignOverlay, OverlayManifest, Rect
+from clipforge.schemas import CampaignOverlay, OverlayManifest, Rect, RenderManifest
 from tests.compliance._helpers import manifest
 from tests.render._media import needs_ffmpeg
 
@@ -216,3 +216,120 @@ def test_layout2_label_never_covered_by_campaign_overlay() -> None:
     assert_render_manifest(manifest(**base, overlay=_overlay(opaque_rect=Rect(x0=266, y0=541, x1=814, y1=673))))
     with pytest.raises(ComplianceError, match="covers the 'Ad' label"):
         assert_render_manifest(manifest(**base, overlay=_overlay(opaque_rect=Rect(x0=0, y0=520, x1=400, y1=640))))
+
+
+# --- label layout 3 (feat/reframe): stacked / crop / fit layouts --------------------------------------------------
+
+HOOK3 = Rect(x0=0, y0=679, x1=1080, y1=1037)
+CAPTIONS3 = Rect(x0=0, y0=1134, x1=1080, y1=1401)
+FACE3 = Rect(x0=370, y0=102, x1=710, y1=476)
+LABEL3 = Rect(x0=36, y0=158, x1=132, y1=242)
+
+
+def _layout3(**kw: object) -> RenderManifest:
+    data: dict[str, object] = {
+        "ad_label_layout": 3,
+        "ad_label_rect": LABEL3,
+        "ad_label_box": True,
+        "layout": "stacked",
+        "hook_rect": HOOK3,
+        "caption_rect": CAPTIONS3,
+        "face_rect": FACE3,
+        "facecam_rect": Rect(x0=0, y0=0, x1=1080, y1=640),
+    }
+    data.update(kw)
+    return manifest(**data)
+
+
+def test_layout3_hook_label_and_overlay_never_cover_the_face() -> None:
+    assert_render_manifest(_layout3())
+    with pytest.raises(ComplianceError, match="the hook covers the streamer's face"):
+        assert_render_manifest(_layout3(hook_rect=Rect(x0=0, y0=167, x1=1080, y1=525)))
+    with pytest.raises(ComplianceError, match="the 'Ad' label covers the streamer's face"):
+        assert_render_manifest(_layout3(ad_label_rect=Rect(x0=380, y0=200, x1=476, y1=284)))
+    with pytest.raises(ComplianceError, match="the campaign overlay covers the streamer's face"):
+        assert_render_manifest(_layout3(overlay=_overlay(opaque_rect=Rect(x0=297, y0=400, x1=783, y1=560))))
+
+
+def test_layout3_overlay_stays_unobstructed() -> None:
+    assert_render_manifest(_layout3(overlay=_overlay(opaque_rect=Rect(x0=297, y0=539, x1=783, y1=671))))
+    with pytest.raises(ComplianceError, match="the hook covers the campaign overlay"):
+        assert_render_manifest(_layout3(overlay=_overlay(opaque_rect=Rect(x0=297, y0=700, x1=783, y1=800))))
+    with pytest.raises(ComplianceError, match="the caption band covers the campaign overlay"):
+        assert_render_manifest(_layout3(overlay=_overlay(opaque_rect=Rect(x0=297, y0=1200, x1=783, y1=1300))))
+
+
+def test_layout3_captions_and_hook_stay_out_of_the_platform_ui() -> None:
+    with pytest.raises(ComplianceError, match="caption band is under the platform UI \\(bottom 20 %\\)"):
+        assert_render_manifest(_layout3(caption_rect=Rect(x0=0, y0=1400, x1=1080, y1=1600)))
+    with pytest.raises(ComplianceError, match="hook is under the platform UI \\(top 150 px\\)"):
+        assert_render_manifest(_layout3(hook_rect=Rect(x0=0, y0=100, x1=1080, y1=300), face_rect=None, layout="crop"))
+
+
+def test_layout3_requires_the_recorded_geometry() -> None:
+    with pytest.raises(ComplianceError, match="no recorded hook position"):
+        assert_render_manifest(_layout3(hook_rect=None))
+    with pytest.raises(ComplianceError, match="no recorded caption band"):
+        assert_render_manifest(_layout3(caption_rect=None))
+    with pytest.raises(ComplianceError, match="stacked layout without a recorded facecam panel and face"):
+        assert_render_manifest(_layout3(face_rect=None))
+
+
+def test_layout3_keeps_the_layout2_label_rules() -> None:
+    with pytest.raises(ComplianceError, match="under the platform UI \\(top 150 px\\)"):
+        assert_render_manifest(_layout3(ad_label_rect=Rect(x0=36, y0=100, x1=132, y1=184)))
+    with pytest.raises(ComplianceError, match=">= 3.0s"):
+        assert_render_manifest(_layout3(ad_label_end_s=2.0))
+    with pytest.raises(ComplianceError, match="no semi-opaque dark background box"):
+        assert_render_manifest(_layout3(ad_label_box=False))
+
+
+def test_layout2_manifests_are_not_judged_by_layout3_geometry() -> None:
+    old = manifest(ad_label_layout=2, ad_label_rect=LAYOUT2_RECT, ad_label_box=True)
+    assert old.hook_rect is None
+    assert old.layout == "fit"
+    assert_render_manifest(old)
+
+
+@pytest.mark.parametrize("layout", ["stacked", "crop", "fit"])
+def test_every_layout_keeps_label_hook_captions_overlay_and_face_apart(
+    layout: str, tmp_path: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real render_candidate (ffmpeg faked), a banner overlay like the first overlay campaign's: in every layout the
+    label is out of the UI on its box, and nothing covers the face or the overlay."""
+    from clipforge.render import clip as clip_mod
+    from clipforge.render.facecam import FacecamSpec, Presence
+    from clipforge.schemas import PxBox
+    from tests.render.test_clip import Fakes, request
+    from tests.support.overlay_png import FAKE_OVERLAY_REL, write_overlay_png
+
+    root = tmp_path / "repo"
+    write_overlay_png(root, size=(2172, 724), margin=(100, 140))
+    monkeypatch.setattr(clip_mod, "project_root", lambda: root)
+    fakes = Fakes()
+    fakes.presence = Presence(ratio=0.9, samples=60, face=PxBox(x=172, y=64, w=100, h=110))
+    ov = CampaignOverlay.model_validate(
+        {"path": FAKE_OVERLAY_REL, "position": {"x_pct": 50, "y_pct": 31.5}, "scale": 0.6}
+    )
+    m = fakes.render(
+        request(
+            tmp_path,
+            content_kind="game",
+            layout=layout,
+            overlay=ov,
+            facecam=FacecamSpec(origin="detected", box=PxBox(x=1400, y=700, w=444, h=264)),
+        ),
+        app_config,
+    )
+    assert m.layout == layout
+    assert_render_manifest(m)
+    assert m.ad_label_rect is not None
+    assert m.hook_rect is not None
+    assert m.caption_rect is not None
+    assert m.overlay is not None
+    rects = [m.ad_label_rect, m.hook_rect, m.caption_rect, m.overlay.opaque_rect]
+    if m.face_rect is not None:
+        rects.append(m.face_rect)
+    for i, a in enumerate(rects):
+        for b in rects[i + 1 :]:
+            assert not a.intersects(b), (a, b)

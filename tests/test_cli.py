@@ -37,6 +37,7 @@ def test_help_lists_every_command() -> None:
         "backup",
         "db",
         "post",
+        "clip",
     ):
         assert name in out
 
@@ -108,3 +109,27 @@ def test_post_repair_is_a_dry_run_unless_told_otherwise_and_exits_1_when_it_cann
     code, out = _run("post", "repair", "987654", "--apply")
     assert code == 1
     assert "dry run" not in out
+
+
+def test_clip_relayout_needs_ids_or_all_pending() -> None:
+    code, out = _run("clip", "relayout")
+    assert code == cli.EXIT_CONFIG
+    assert "--all-pending" in out
+
+
+def test_clip_relayout_dry_run_on_empty_db_changes_nothing() -> None:
+    code, out = _run("clip", "relayout", "--all-pending", "--dry-run")
+    assert code == 0
+    assert "dry run: 0 of 0 clip(s) would be re-rendered" in out
+
+
+def test_clip_relayout_refuses_an_unknown_clip() -> None:
+    code, out = _run("clip", "relayout", "987654")
+    assert code == cli.EXIT_CHECK_FAILED
+    assert "clip 987654: not re-rendered" in out
+
+
+def test_source_facecam_unknown_source() -> None:
+    code, out = _run("source", "facecam", "987654")
+    assert code != 0
+    assert "no source with id 987654" in out

@@ -559,7 +559,7 @@ def source_facecam(
     if not source.local_path or not Path(source.local_path).is_file():
         raise RegistryError(f"source {source.id} media is not on disk")
     path = Path(source.local_path)
-    campaign = get_campaign(session, source.campaign_id)
+    campaign = campaign_from_row(get_campaign(session, source.campaign_id))
     src = (probe_fn or probe)(path)
     detection = None if redetect else facecam_from_row(source)
     if detection is None and campaign.facecam_box is None:

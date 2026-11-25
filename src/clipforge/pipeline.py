@@ -1010,6 +1010,13 @@ def finish_rerender(
     """New copy (New hook, paid) or new range (Shorter), render, QA, then swap the clip to the new file with a new
     `rendered_at` and move it RENDERED -> PENDING_REVIEW. Any failure (including QA) keeps the old file and returns
     the clip to review (see `restore_after_failed_rerender`)."""
+    return _finish_rerender(settings, factory, job, deps)[1]
+
+
+def _finish_rerender(
+    settings: Settings, factory: sessionmaker[Session], job: RerenderJob, deps: PipelineDeps | None = None
+) -> tuple[bool, str]:
+    """`finish_rerender`, also saying whether the new render was swapped in."""
     deps = deps or PipelineDeps()
     new_path: str | None = None
     try:
@@ -1040,7 +1047,7 @@ def finish_rerender(
         reason = _redact(settings, f"{type(exc).__name__}: {exc}")[:300]
         restore_after_failed_rerender(settings, factory, deps, job.clip_id, reason)
         what = job.kind.replace("_", " ")
-        return f"Clip {job.clip_id}: {what} failed ({reason}). The previous version is back for review."
+        return False, f"Clip {job.clip_id}: {what} failed ({reason}). The previous version is back for review."
 
     with session_scope(factory) as s:
         now = deps.clock()  # taken inside the transaction that swaps the file (reviewer hardening)
@@ -1050,7 +1057,7 @@ def finish_rerender(
         assert cand is not None
         if clip.state is not ClipState.RENDERED:  # recovered meanwhile by the worker: keep its decision
             _remove_render_dir(settings, manifest.clip_path)
-            return f"Clip {job.clip_id} changed while re-rendering; nothing was swapped."
+            return False, f"Clip {job.clip_id} changed while re-rendering; nothing was swapped."
         clip.path = manifest.clip_path
         clip.sha256 = manifest.sha256
         clip.duration_s = manifest.duration_s
@@ -1086,7 +1093,7 @@ def finish_rerender(
         what = f"new hook: {hook}"
     else:
         what = f"now {job.end_s - job.start_s:.0f}s"
-    return f"Clip {job.clip_id} re-rendered ({what}). The new preview follows; approve that one."
+    return True, f"Clip {job.clip_id} re-rendered ({what}). The new preview follows; approve that one."
 
 
 def restore_after_failed_rerender(
@@ -1235,11 +1242,11 @@ def relayout_one(
         result.message = str(exc)
         return result
     result.source_id, result.old_layout = job.inputs.source_id, job.old_layout
-    result.message = finish_rerender(settings, factory, job, deps)
+    swapped, result.message = _finish_rerender(settings, factory, job, deps)
     with session_scope(factory) as s:
         clip = s.get(ClipRow, clip_id)
         if clip is not None:
-            result.ok = clip.state is ClipState.PENDING_REVIEW and clip.path != job.old_path
+            result.ok = swapped and clip.state is ClipState.PENDING_REVIEW
             result.new_layout = clip.layout or ""
             result.render_s = clip.render_s
             result.rendered_at = clip.rendered_at
