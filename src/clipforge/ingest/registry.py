@@ -99,7 +99,7 @@ def validate_campaign_setup(campaign: CampaignIn, settings: Settings) -> None:
             )
         except campaign_overlay.OverlayPlacementError as exc:
             raise RegistryError(f"overlay: {exc}") from exc
-        ad = campaign_overlay.place_ad_label(settings.app.render.ad_label_text, placement)
+        ad = campaign_overlay.place_ad_label(settings.app.render.ad_label_text, placement, settings.app.styles.values())
         o = placement.opaque_rect
         console.print(
             f"overlay {campaign.overlay.path}: visible area x {o.x0}-{o.x1}, y {o.y0}-{o.y1} "

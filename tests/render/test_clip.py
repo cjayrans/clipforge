@@ -88,6 +88,9 @@ def test_render_candidate_manifest(tmp_path: Path, app_config: AppConfig) -> Non
     assert (m.width, m.height, m.fps) == (1080, 1920, 30.0)
     assert m.duration_s == 30.02
     assert (m.has_ad_label, m.ad_label_start_s, m.ad_label_end_s) == (True, 0.0, 3.0)
+    assert (m.ad_label_layout, m.ad_label_box) == (2, True)
+    assert m.ad_label_rect is not None
+    assert m.ad_label_rect.y0 >= 150  # below TikTok's top UI zone
     assert (m.hook_text, m.hook_end_s) == ("Nobody saw this coming", 2.5)
     assert m.audio_source_only
     assert len(m.sha256) == 64
@@ -245,7 +248,9 @@ def test_ad_label_pixels_visible_then_gone(
             settings=EncodeSettings.from_config(app_config.render),
         )
     )
-    box = (40, 95, 160, 70)  # around \\pos(48,120): 48 px "Ad" in a padded box
+    r = m.ad_label_rect
+    assert r is not None
+    box = (r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0)  # the label's padded box as recorded in the manifest
     diffs = {
         t: _mean_abs_diff(_gray_region(m.clip_path, t, *box), _gray_region(baseline, t, *box)) for t in (0.5, 2.5, 4.0)
     }
@@ -254,3 +259,40 @@ def test_ad_label_pixels_visible_then_gone(
     assert diffs[0.5] > 15, diffs
     assert diffs[2.5] > 15, diffs
     assert diffs[4.0] < 4, diffs
+
+
+def _bright_source(tmp_path: Path) -> Path:
+    """12 s of white 1920x1080 video with a tone: the worst case for a white "Ad" label without a box."""
+    import subprocess
+
+    out = tmp_path / "white.mp4"
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+           "-f", "lavfi", "-i", "color=c=white:s=1920x1080:r=30:d=12",
+           "-f", "lavfi", "-i", "sine=frequency=440:duration=12",
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-shortest", str(out)]  # fmt: skip
+    subprocess.run(cmd, check=True)
+    return out
+
+
+@needs_ffmpeg
+def test_ad_label_readable_on_white_footage(
+    tmp_path: Path, app_config: AppConfig, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """On pure white footage the label's dark box makes the area dark and the white "Ad" text stands out on it."""
+    src = _bright_source(tmp_path)
+    req = request(tmp_path, source_path=src, start_s=0.0, end_s=11.0, content_kind="game", hook="", words=[])
+    m = render_candidate(req, app_config, shots_fn=lambda p, a, b: [Shot(a, b)])
+    r = m.ad_label_rect
+    assert r is not None
+    box = (r.x0 + 2, r.y0 + 2, r.x1 - r.x0 - 4, r.y1 - r.y0 - 4)
+    on = _gray_region(m.clip_path, 0.5, *box)
+    off = _gray_region(m.clip_path, 4.0, *box)
+    dark = sorted(on)[len(on) // 4]  # the box (most pixels)
+    text = sorted(on)[-len(on) // 20]  # the brightest 5 %: the letters
+    mean_off = sum(off) / len(off)
+    with capsys.disabled():
+        print(f"\nAD-LABEL on white: box quartile {dark}, text 95th pct {text}, area after 3 s {mean_off:.0f}")
+    assert dark < 110, dark  # 75 % black over white: about 64 in luma, far from the white background
+    assert text > 200, text  # white letters on the dark box
+    assert mean_off > 230, mean_off  # gone after 3 s: back to white
