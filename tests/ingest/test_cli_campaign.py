@@ -115,3 +115,33 @@ def test_source_retry_end_to_end() -> None:
         assert "retry after download_failed" in last.detail
     assert _run("source", "retry", "99")[0] == 1
     engine.dispose()
+
+
+def test_source_rerank_end_to_end() -> None:
+    """`cf source rerank` refuses a source that is not ranked, then puts a ranked one back to TRANSCRIBED."""
+    from clipforge.db import TranscriptRow
+    from clipforge.ingest.models import set_source_status
+    from clipforge.schemas import SourceStatus
+
+    assert _run("campaign", "add", "--from-json", str(ASIANJEFF))[0] == 0
+    assert _run("source", "add", "1", "https://cdn.example.com/ep1.mp4")[0] == 0
+    code, out = _run("source", "rerank", "1")
+    assert code == 1
+    assert "only ranked sources" in out
+
+    engine = make_engine(load_settings().database_url)
+    fac = make_session_factory(engine)
+    with session_scope(fac) as s:
+        src = s.get(SourceRow, 1)
+        assert src is not None
+        s.add(TranscriptRow(source_id=1, provider="groq", model="m", words_json_path="/x.json"))
+        set_source_status(s, src, SourceStatus.RANKED)
+    code, out = _run("source", "rerank", "1")
+    assert code == 0, out
+    assert "ranked -> transcribed" in out
+    with session_scope(fac) as s:
+        src = s.get(SourceRow, 1)
+        assert src is not None
+        assert src.status is SourceStatus.TRANSCRIBED
+    assert _run("source", "rerank", "99")[0] == 1
+    engine.dispose()

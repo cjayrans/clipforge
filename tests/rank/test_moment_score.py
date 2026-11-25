@@ -283,6 +283,36 @@ def test_rank_moments_end_to_end(fake: FakeAnthropic, client: ClaudeClient, prof
     assert "Humor and meme tone" in user
 
 
+def test_rank_moments_never_proposes_a_window_overlapping_used_footage(
+    fake: FakeAnthropic, client: ClaudeClient, profile
+) -> None:
+    tr = transcript(REACTION_SCRIPT)
+    fake.default = lambda body: (
+        echo_moments()(body)
+        if body.get("tools")
+        else json_text(
+            {
+                "hook": "He sold his car for a dollar",
+                "youtube_title": "Sold the car by mistake",
+                "captions": [{"platform": "tiktok", "text": "worst deal ever #gaming"}],
+            }
+        )
+    )
+    kwargs: dict[str, Any] = {
+        "client": client,
+        "loudness_db": loudness(spikes={31: -8.0, 32: -10.0, 66: -9.0}),
+        "motion": motion(spikes={30.0: 25.0}),
+    }
+    campaign = campaign_in(moment_profile="gta6-streamer")
+    base = rank_moments(tr, campaign, [Platform.TIKTOK], profile, **kwargs)
+    assert len(base.candidates) == 2
+    first = base.candidates[0]
+    result = rank_moments(tr, campaign, [Platform.TIKTOK], profile, exclude=[(first.start_s, first.end_s)], **kwargs)
+    for c in result.candidates:
+        assert not (c.start_s < first.end_s and first.start_s < c.end_s)
+    assert len(result.candidates) < len(base.candidates)
+
+
 def test_rank_moments_with_nothing_triggered_calls_no_api(fake: FakeAnthropic, client: ClaudeClient, profile) -> None:
     tr = transcript([(float(t), "we keep talking about the plan") for t in range(0, 80, 2)])
     result = rank_moments(tr, campaign_in(), [Platform.TIKTOK], profile, client=client)

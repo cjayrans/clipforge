@@ -37,7 +37,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -80,7 +80,7 @@ from clipforge.rank.claude_client import ClaudeClient, RankError
 from clipforge.rank.copy import RankResult, rank_source, write_copy
 from clipforge.rank.media_signals import MediaSignals
 from clipforge.rank.media_signals import extract as extract_media_signals
-from clipforge.rank.moment_score import rank_moments
+from clipforge.rank.moment_score import overlaps_any, rank_moments
 from clipforge.rank.profile import MomentProfile, ProfileError, SignalRules, load_profile
 from clipforge.rank.prompts import Fewshot, PromptError, load_fewshots
 from clipforge.rank.select import shorter_range, text_between
@@ -226,6 +226,21 @@ def _latest_transcript(session: Session, source_id: int) -> Transcript:
     if row is None:
         raise _StageFailed(f"source {source_id} has no transcript")
     return load_transcript(row.words_json_path)
+
+
+USED_CLIP_STATES = (ClipState.APPROVED, ClipState.SCHEDULED, ClipState.PUBLISHED)
+
+
+def used_windows(session: Session, source_id: int) -> list[tuple[float, float]]:
+    """Footage ranges of this source already used by an approved, scheduled or published clip. A re-rank never
+    proposes a window overlapping one of them."""
+    rows = session.execute(
+        select(CandidateRow.start_s, CandidateRow.end_s)
+        .join(ClipRow, ClipRow.candidate_id == CandidateRow.id)
+        .where(CandidateRow.source_id == source_id, ClipRow.state.in_(USED_CLIP_STATES))
+        .distinct()
+    ).all()
+    return [(a, b) for a, b in rows]
 
 
 def moment_from_row(row: CandidateRow) -> MomentScore | None:
@@ -594,6 +609,7 @@ class Pipeline:
             transcript = _latest_transcript(s, source_id)
             fewshots = load_fewshots(s)
             local_path = Path(src.local_path) if src.local_path else None
+            used = used_windows(s, source_id)
         profile: MomentProfile | None = None
         if campaign.moment_profile is not None:
             try:
@@ -620,13 +636,16 @@ class Pipeline:
             if profile is None:
                 result = rank_source(transcript, campaign, account.platforms, client=self._claude, fewshots=fewshots)
             else:
-                result = self._rank_moments(transcript, campaign, account.platforms, profile, fewshots, local_path)
+                result = self._rank_moments(
+                    transcript, campaign, account.platforms, profile, fewshots, local_path, used
+                )
         except (RankError, PromptError, ComplianceError) as exc:
             with session_scope(self.factory) as s:
                 alerts.raise_alert(
                     s, alerts.RANK_EMPTY, source_id, _redact(self.settings, f"ranking source {source_id} failed: {exc}")
                 )
             raise _StageFailed(f"rank: {exc}") from exc
+        result.candidates = [c for c in result.candidates if not overlaps_any((c.start_s, c.end_s), used)]
         with session_scope(self.factory) as s:
             src = s.get(SourceRow, source_id)
             assert src is not None
@@ -665,6 +684,7 @@ class Pipeline:
         profile: MomentProfile,
         fewshots: list[Fewshot],
         local_path: Path | None,
+        used: Sequence[tuple[float, float]] = (),
     ) -> RankResult:
         """Loudness/motion signals (cheap ffmpeg passes, no DB session held), then the moment ranker. Missing or
         failed media signals are not fatal: the ranker runs on the transcript and the gates record it."""
@@ -692,6 +712,7 @@ class Pipeline:
             fewshots=fewshots,
             loudness_db=signals.loudness_db,
             motion=signals.motion,
+            exclude=used,
         )
 
     # -- render ---------------------------------------------------------------------------------

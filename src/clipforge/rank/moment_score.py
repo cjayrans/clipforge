@@ -424,6 +424,11 @@ def moment_note(candidate: Candidate, profile_labels: dict[str, str] | None = No
     return f"{label}: {candidate.moment.reason}".strip()
 
 
+def overlaps_any(window: tuple[float, float], ranges: Sequence[tuple[float, float]]) -> bool:
+    """True if `window` shares any footage with one of `ranges` (touching ends do not count)."""
+    return any(window[0] < end and start < window[1] for start, end in ranges)
+
+
 def rank_moments(
     transcript: Transcript,
     campaign: CampaignIn,
@@ -434,6 +439,7 @@ def rank_moments(
     fewshots: Sequence[Fewshot] = (),
     loudness_db: Sequence[float] | None = None,
     motion: Sequence[tuple[float, float]] | None = None,
+    exclude: Sequence[tuple[float, float]] = (),
 ) -> RankResult:
     """Signals → candidates + pre-rank gates → Haiku → post gates → top N → Sonnet copy, for one source.
     Persists nothing except cost rows (the pipeline writes candidates)."""
@@ -442,6 +448,8 @@ def rank_moments(
     version = prompt_version_tag(score_prompt, copy_prompt)
     words = sorted((w for w in transcript.words if w.text.strip()), key=lambda w: w.start_s)
     moments, gen = generate_moments(transcript, profile, loudness_db=loudness_db, motion=motion)
+    if exclude:  # windows that overlap footage already used by an approved/published clip are never proposed
+        moments = [m for m in moments if not overlaps_any((m.start_s, m.end_s), exclude)]
     result = RankResult(windows_built=len(moments), prompt_version=version)
     if not moments:
         result.detail_extra = f"moments: {gen.summary()}"

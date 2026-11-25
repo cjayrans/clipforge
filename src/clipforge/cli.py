@@ -62,6 +62,7 @@ TARGETS: dict[str, Target] = {
     "campaign check": Target("ingest.registry", "check_campaign", "Phase 1 A (feat/ingest-transcribe)"),
     "source add": Target("ingest.registry", "add_source", "Phase 1 A (feat/ingest-transcribe)"),
     "source retry": Target("ingest.registry", "retry_source", "Phase 2 (P2.1)"),
+    "source rerank": Target("ingest.registry", "rerank_source", "feat/source-rerank"),
     "worker": Target("scheduler.worker", "run_worker", "Phase 1 D (feat/ops)"),
     "bot": Target("review.bot", "run_bot", "Phase 1 D (feat/ops)"),
     "report weekly": Target("track.reports", "weekly_report", "Phase 1 D (feat/ops)"),
@@ -211,6 +212,12 @@ def campaign_check(ctx: typer.Context, campaign_id: int) -> None:
 def source_add(ctx: typer.Context, campaign_id: int, url: str) -> None:
     """Register a footage URL (or folder link) on a campaign. Only registered URLs can be downloaded."""
     _delegate(ctx, "source add", campaign_id, url)
+
+
+@source_app.command("rerank")
+def source_rerank(ctx: typer.Context, source_id: int) -> None:
+    """Rank a ranked source again (existing download and transcript); the next nightly run does it."""
+    _delegate(ctx, "source rerank", source_id)
 
 
 @source_app.command("retry")
