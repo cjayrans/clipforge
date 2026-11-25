@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -13,12 +14,40 @@ from clipforge.config import Settings
 from clipforge.db import ClipRow, CostRow, EveningRow, PostRow
 from clipforge.publish.queries import campaign_model, lineage
 from clipforge.publish.slots import plan_slots
-from clipforge.schemas import ClipState, Slot
+from clipforge.schemas import ClipState, RenderManifest, Slot
+
+LAYOUT_LABELS = {
+    "stacked": "stacked (facecam top, gameplay below)",
+    "crop": "crop (9:16 gameplay crop)",
+    "fit": "fit (whole frame over blur)",
+}
+
+
+def _skipped_layouts(clip_path: str) -> str:
+    """Why auto skipped better layouts (the "stacked: ..." / "crop: ..." parts of the manifest's layout_reason)."""
+    try:
+        manifest = RenderManifest.model_validate_json(
+            Path(clip_path).with_suffix(".manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return ""
+    parts = [p.strip() for p in manifest.layout_reason.split(";")]
+    skipped = "; ".join(p for p in parts if p.startswith(("stacked:", "crop:")))
+    return skipped[:240]
+
+
+def layout_line(clip: ClipRow) -> str:
+    name = clip.layout or "fit"
+    line = f"Layout: {LAYOUT_LABELS.get(name, name)}"
+    if clip.render_s is not None:
+        line += f" | render {clip.render_s:.0f}s"
+    return line
 
 
 def preview_caption(session: Session, settings: Settings, clip: ClipRow) -> str:
-    """Caption under a review video: campaign, score, hook, platforms, duration; for moment-ranked clips also the
-    archetype and the four scores, and a manual-check line when the ranker flagged the content (never auto-rejected).
+    """Caption under a review video: campaign, score, hook, platforms, duration, layout (and render time); for
+    moment-ranked clips also the archetype and the four scores, and a manual-check line when the ranker flagged the
+    content (never auto-rejected).
     """
     lin = lineage(session, clip)
     campaign = campaign_model(lin.campaign)
@@ -30,7 +59,11 @@ def preview_caption(session: Session, settings: Settings, clip: ClipRow) -> str:
         f"Clip {clip.id} - {campaign.name}",
         f"Score {cand.score} | {clip.duration_s:.0f}s | {names}",
         f"Hook: {cand.hook or '(none)'}",
+        layout_line(clip),
     ]
+    skipped = _skipped_layouts(clip.path) if clip.layout else ""
+    if skipped:
+        lines.append(f"Not used: {skipped}")
     if cand.archetype:
         lines.append(
             f"Moment: {cand.archetype} | reaction {cand.score_reaction}, event {cand.score_event}, "

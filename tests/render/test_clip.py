@@ -13,9 +13,11 @@ from clipforge.config import AppConfig
 from clipforge.qa.probe import ProbeResult, probe
 from clipforge.render.clip import ClipRequest, render_candidate
 from clipforge.render.encode import RenderError
+from clipforge.render.facecam import Presence
 from clipforge.render.reframe import Detector, FaceBox
+from clipforge.render.saliency import MotionSample
 from clipforge.render.shots import Shot
-from clipforge.schemas import Transcript
+from clipforge.schemas import PxBox, Transcript
 from tests.conftest import FIXTURES
 from tests.render._media import needs_ffmpeg
 
@@ -54,6 +56,10 @@ class Fakes:
         self.src = src
         self.args: list[str] | None = None
         self.detector_calls = 0
+        self.motion: list[MotionSample] = []
+        self.motion_calls = 0
+        self.presence = Presence(ratio=0.0, samples=0)
+        self.presence_calls = 0
 
     def probe(self, path: Path) -> ProbeResult:
         return OUT if path.suffix == ".mp4" and path.name.startswith("clip_") else self.src
@@ -73,9 +79,24 @@ class Fakes:
 
         yield detect
 
+    def motion_fn(self, path: Path, start: float, end: float, w: int, h: int, mask: PxBox | None) -> list[MotionSample]:
+        self.motion_calls += 1
+        return self.motion
+
+    def presence_fn(self, path: Path, box: PxBox, start: float, end: float) -> Presence:
+        self.presence_calls += 1
+        return self.presence
+
     def render(self, req: ClipRequest, app: AppConfig) -> Any:
         return render_candidate(
-            req, app, detector_factory=self.detector, shots_fn=self.shots, probe_fn=self.probe, run=self.run
+            req,
+            app,
+            detector_factory=self.detector,
+            shots_fn=self.shots,
+            probe_fn=self.probe,
+            run=self.run,
+            presence_fn=self.presence_fn,
+            motion_fn=self.motion_fn,
         )
 
 
@@ -88,7 +109,9 @@ def test_render_candidate_manifest(tmp_path: Path, app_config: AppConfig) -> Non
     assert (m.width, m.height, m.fps) == (1080, 1920, 30.0)
     assert m.duration_s == 30.02
     assert (m.has_ad_label, m.ad_label_start_s, m.ad_label_end_s) == (True, 0.0, 3.0)
-    assert (m.ad_label_layout, m.ad_label_box) == (2, True)
+    assert (m.ad_label_layout, m.ad_label_box) == (3, True)
+    assert m.hook_rect is not None
+    assert m.caption_rect is not None
     assert m.ad_label_rect is not None
     assert m.ad_label_rect.y0 >= 150  # below TikTok's top UI zone
     assert (m.hook_text, m.hook_end_s) == ("Nobody saw this coming", 2.5)
@@ -112,14 +135,30 @@ def test_render_candidate_writes_ass_with_overlays_and_captions(tmp_path: Path, 
     assert "boxblur" in graph  # face-less shot
 
 
-def test_game_content_skips_detection(tmp_path: Path, app_config: AppConfig) -> None:
+def test_game_content_with_fit_layout_skips_detection(tmp_path: Path, app_config: AppConfig) -> None:
     fakes = Fakes()
-    fakes.render(request(tmp_path, content_kind="game"), app_config)
+    m = fakes.render(request(tmp_path, content_kind="game", layout="fit"), app_config)
     assert fakes.detector_calls == 0
+    assert fakes.motion_calls == 0
+    assert m.layout == "fit"
     assert fakes.args is not None
     graph = fakes.args[fakes.args.index("-filter_complex") + 1]
     assert "crop=606" not in graph
     assert graph.count("boxblur") == 2
+
+
+def test_game_content_auto_without_facecam_is_a_centre_crop(tmp_path: Path, app_config: AppConfig) -> None:
+    fakes = Fakes()
+    m = fakes.render(request(tmp_path, content_kind="game"), app_config)
+    assert fakes.detector_calls == 0  # talk face detection never runs on game footage
+    assert fakes.presence_calls == 0  # no facecam, so stacked is never tried
+    assert m.layout == "crop"
+    assert m.crop_plan is not None
+    assert all(c.mode == "game_crop" and c.camera == "stationary" for c in m.crop_plan.shots)
+    assert fakes.args is not None
+    graph = fakes.args[fakes.args.index("-filter_complex") + 1]
+    assert graph.count("crop=w=606:h=1080:x=657:y=0") == 2  # (1920 - 606) / 2
+    assert "boxblur" not in graph
 
 
 def test_silent_source_refused(tmp_path: Path, app_config: AppConfig) -> None:

@@ -90,6 +90,8 @@ def deps(anthropic: FakeAnthropic, render: FakeRender, clock: Clock) -> Pipeline
         render_kwargs=render.kwargs(),
         qa_probe=render.probe,
         clock=clock,
+        facecam_fn=render.facecam,
+        qa_face_check=render.face_check,
     )
 
 

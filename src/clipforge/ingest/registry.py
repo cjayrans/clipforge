@@ -16,6 +16,7 @@ import json
 import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 import typer
@@ -30,10 +31,18 @@ from clipforge.config import Settings
 from clipforge.db import CampaignRow, CandidateRow, SourceRow, TranscriptRow, record_event, transition
 from clipforge.ingest import alerts
 from clipforge.ingest.folders import FolderListError, list_gdrive_folder
-from clipforge.ingest.models import campaign_from_row, campaign_row_values, set_source_status
+from clipforge.ingest.models import (
+    campaign_from_row,
+    campaign_row_values,
+    facecam_from_row,
+    set_source_status,
+    store_facecam,
+)
 from clipforge.rank.profile import ProfileError, load_profile
 from clipforge.render import campaign_overlay
+from clipforge.render import layout as layouts
 from clipforge.render.assets import project_root
+from clipforge.render.facecam import FacecamDetection
 from clipforge.schemas import (
     CampaignIn,
     CampaignStatus,
@@ -96,6 +105,9 @@ def validate_campaign_setup(campaign: CampaignIn, settings: Settings) -> None:
     - Invariant 3 / overlay: the overlay file exists, is an RGBA PNG under campaigns/assets/, and its visible part
       misses the captions, the hook, the platform UI zones, and leaves a spot for the "Ad" label.
     - Moment profile: the named file in config/moment_profiles/ exists and is valid.
+    - Layouts: `layout: stacked` checks the overlay against the stacked arrangement only (hook under the overlay
+      or the facecam panel, label in the panel's top-left corner); every other layout against the default one, which
+      auto/crop/fit fall back to. `facecam_box` bounds are checked by schemas.FacecamBoxPct.
     """
     if campaign.moment_profile is not None:
         try:
@@ -110,18 +122,32 @@ def validate_campaign_setup(campaign: CampaignIn, settings: Settings) -> None:
             "remove x from allowed_platforms"
         )
     if campaign.overlay is not None:
-        try:
-            placement = campaign_overlay.resolve(
-                campaign.overlay, project_root(), settings.app.styles.values(), settings.app.render.ad_label_text
-            )
-        except campaign_overlay.OverlayPlacementError as exc:
-            raise RegistryError(f"overlay: {exc}") from exc
-        ad = campaign_overlay.place_ad_label(settings.app.render.ad_label_text, placement, settings.app.styles.values())
+        styles = list(settings.app.styles.values())
+        text = settings.app.render.ad_label_text
+        if campaign.layout == "stacked":
+            # Only the stacked arrangement is ever used; the face is checked per clip at render time.
+            try:
+                placement = campaign_overlay.load_placement(campaign.overlay, project_root())
+                texts = campaign_overlay.place_texts(text, placement, styles, panel=layouts.facecam_panel())
+            except campaign_overlay.OverlayPlacementError as exc:
+                raise RegistryError(f"overlay (stacked layout): {exc}") from exc
+            ad = texts.ad
+        else:
+            # auto, crop and fit all fall back to the default arrangement, so it must work.
+            try:
+                placement = campaign_overlay.resolve(campaign.overlay, project_root(), styles, text)
+            except campaign_overlay.OverlayPlacementError as exc:
+                raise RegistryError(f"overlay: {exc}") from exc
+            ad = campaign_overlay.place_ad_label(text, placement, styles)
         o = placement.opaque_rect
         console.print(
             f"overlay {campaign.overlay.path}: visible area x {o.x0}-{o.x1}, y {o.y0}-{o.y1} "
             f"(clear of captions, hook and platform UI); 'Ad' label at ({ad.x}, {ad.y})"
         )
+    if campaign.layout != "auto" or campaign.facecam_box is not None:
+        box = campaign.facecam_box
+        where = f"; facecam_box x {box.x_pct}% y {box.y_pct}% {box.w_pct}% x {box.h_pct}%" if box else ""
+        console.print(f"layout {campaign.layout}{where}")
 
 
 def upsert_campaign(session: Session, campaign: CampaignIn) -> tuple[CampaignRow, bool]:
@@ -505,3 +531,63 @@ def rerank_source(session: Session, settings: Settings | None, source_id: int) -
         f"({len(stale)} unrendered candidate(s) expired)"
     )
     return source
+
+
+def source_facecam(
+    session: Session,
+    settings: Settings | None,
+    source_id: int,
+    *,
+    redetect: bool = False,
+    debug_image: Path | None = None,
+    detect_fn: Callable[[Path], FacecamDetection | None] | None = None,
+    grab: Callable[[Path, float, int, int], Any] | None = None,
+    probe_fn: Callable[[Path], Any] | None = None,
+) -> FacecamDetection | None:
+    """`cf source facecam <id>`: the facecam box used for a source's stacked layout.
+
+    Shows the stored detection (or runs and stores one: `--redetect`, or none stored yet). A campaign's manual
+    `facecam_box` wins over detection and is shown instead. `--debug-image PATH` writes a sample frame (middle of the
+    source) with the face (green), facecam (red) and centre gameplay window (blue) drawn, plus `<stem>_stacked.jpg`,
+    a half-size mock of the stacked layout, so the box can be checked by eye before any re-render."""
+    from clipforge.qa.probe import probe
+    from clipforge.render.facecam import default_detect, draw_debug, draw_debug_stacked, grab_frame, pct_to_px
+
+    source = session.get(SourceRow, source_id)
+    if source is None:
+        raise RegistryError(f"no source with id {source_id}")
+    if not source.local_path or not Path(source.local_path).is_file():
+        raise RegistryError(f"source {source.id} media is not on disk")
+    path = Path(source.local_path)
+    campaign = get_campaign(session, source.campaign_id)
+    src = (probe_fn or probe)(path)
+    detection = None if redetect else facecam_from_row(source)
+    if detection is None and campaign.facecam_box is None:
+        detection = (detect_fn or default_detect)(path)
+        if detection is None:
+            raise RegistryError("facecam detection could not run (mediapipe missing or the media is unreadable)")
+        store_facecam(session, source, detection, actor="operator")
+    box = None
+    if campaign.facecam_box is not None:
+        box = pct_to_px(campaign.facecam_box, src.width, src.height)
+        console.print(
+            f"source {source.id}: campaign {campaign.id} sets facecam_box; using x {box.x}, y {box.y}, {box.w}x{box.h}"
+            f" px of {src.width}x{src.height} (detection not used)"
+        )
+    elif detection is not None:
+        box = detection.box
+        console.print(f"source {source.id}: {detection.summary()}")
+        if detection.face is not None:
+            f = detection.face
+            console.print(f"  median face x {f.x}, y {f.y}, {f.w}x{f.h} px")
+    if debug_image is not None:
+        rgb = (grab or grab_frame)(path, round(src.duration_s / 2, 3), src.width, src.height)
+        if rgb is None:
+            raise RegistryError("could not read a frame for the debug image")
+        draw_debug(rgb, detection, box, debug_image)
+        console.print(f"debug image: {debug_image}")
+        if box is not None:
+            stacked = debug_image.with_name(f"{debug_image.stem}_stacked.jpg")
+            draw_debug_stacked(rgb, box, stacked)
+            console.print(f"stacked mock: {stacked}")
+    return detection

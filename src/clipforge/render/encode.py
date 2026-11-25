@@ -1,7 +1,10 @@
 """Encoder: crop plan + ASS → one ffmpeg run → 1080×1920 H.264/AAC clip + `schemas.RenderManifest`.
 
 ARCHITECTURE §4.4: a single filtergraph with `trim` + crop/fit_blur per shot, `concat`, then `ass` (captions, hook,
-"Ad" label), `fps`, `format=yuv420p`; `libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -r 30`,
+"Ad" label), `fps`, `format=yuv420p`. Layouts (feat/reframe): a `game_crop` shot is a full-height 9:16 crop whose left
+edge may follow a path in `t` (quoted expression, render.crop_path.x_expr); a `stacked` shot splits the frame into
+the facecam box (scaled into the top 1080x640 panel) and a gameplay crop (1080x1280 below), joined with `vstack`.
+`libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -r 30`,
 `aac -b:a 128k`, `loudnorm=I=-14:TP=-1.5:LRA=11`.
 
 Invariant 10: input 0 is the source and only its audio is mapped (`-map 0:a:0`, filtered with `-af`, never
@@ -22,6 +25,8 @@ from pathlib import Path
 
 from clipforge import compliance
 from clipforge.config import RenderConfig
+from clipforge.render.crop_path import x_expr
+from clipforge.render.layout import FACECAM_PANEL_H, GAMEPLAY_PANEL_H
 from clipforge.schemas import CropMode, CropPlan, RenderManifest, ShotCrop
 
 OUT_W, OUT_H = compliance.RENDER_WIDTH, compliance.RENDER_HEIGHT
@@ -91,6 +96,13 @@ def filter_path(path: Path | str) -> str:
     return text
 
 
+def _gameplay_crop(crop: ShotCrop) -> str:
+    """`crop` of the gameplay part: a constant left edge, or a piecewise-linear path in `t` (render.crop_path)."""
+    x = x_expr(crop.keyframes, crop.x) if crop.keyframes else str(crop.x)
+    xs = f"'{x}'" if crop.keyframes else x
+    return f"crop=w={crop.w}:h={crop.h}:x={xs}:y={crop.y}"
+
+
 def _shot_filter(crop: ShotCrop, label_in: str, label_out: str, start: float, end: float, i: int) -> str:
     trim = f"[{label_in}]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS"
     if crop.mode is CropMode.FIT_BLUR:
@@ -100,6 +112,18 @@ def _shot_filter(crop: ShotCrop, label_in: str, label_out: str, start: float, en
             f"boxblur=10:2,scale={OUT_W}:{OUT_H},setsar=1[bb{i}];"
             f"[fg{i}]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[ff{i}];"
             f"[bb{i}][ff{i}]overlay=(W-w)/2:(H-h)/2[{label_out}]"
+        )
+    if crop.mode is CropMode.GAME_CROP:
+        return f"{trim},{_gameplay_crop(crop)},scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1[{label_out}]"
+    if crop.mode is CropMode.STACKED:
+        f = crop.facecam
+        if f is None:
+            raise RenderError(f"stacked shot {i} has no facecam box")
+        return (
+            f"{trim},split=2[fa{i}][ga{i}];"
+            f"[fa{i}]crop={f.w}:{f.h}:{f.x}:{f.y},scale={OUT_W}:{FACECAM_PANEL_H}:flags=lanczos,setsar=1[fc{i}];"
+            f"[ga{i}]{_gameplay_crop(crop)},scale={OUT_W}:{GAMEPLAY_PANEL_H}:flags=lanczos,setsar=1[gp{i}];"
+            f"[fc{i}][gp{i}]vstack=inputs=2[{label_out}]"
         )
     return f"{trim},crop={crop.w}:{crop.h}:{crop.x}:0,scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1[{label_out}]"
 

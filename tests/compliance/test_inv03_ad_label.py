@@ -194,14 +194,17 @@ def test_older_manifests_keep_their_rules() -> None:
     assert_render_manifest(manifest())  # pre-overlay manifests had no rect at all
 
 
-def test_new_renders_use_layout2(tmp_path: Path, app_config: AppConfig) -> None:
-    """A real render_candidate call (ffmpeg faked) writes layout 2, the dark box, and a label rect out of the UI."""
+def test_new_renders_use_layout3(tmp_path: Path, app_config: AppConfig) -> None:
+    """A real render_candidate call (ffmpeg faked) writes label layout 3 (layout 2's rules plus the recorded hook and
+    caption geometry), the dark box, and a label rect out of the UI."""
     from clipforge.compliance import AD_LABEL_LAYOUT
     from tests.render.test_clip import Fakes, request
 
     m = Fakes().render(request(tmp_path), app_config)
-    assert AD_LABEL_LAYOUT == 2
+    assert AD_LABEL_LAYOUT == 3
     assert m.ad_label_layout == AD_LABEL_LAYOUT
+    assert m.hook_rect is not None
+    assert m.caption_rect is not None
     assert m.ad_label_box is True
     assert m.ad_label_rect is not None
     assert m.ad_label_rect.y0 >= 150

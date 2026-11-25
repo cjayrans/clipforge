@@ -79,6 +79,19 @@ class FakeRender:
         self.encodes: list[list[str]] = []
         self.fail = fail
         self.out_fps = out_fps
+        from clipforge.render.facecam import Presence
+
+        self.presence_result: Any = Presence(ratio=0.0, samples=0, problem="fake: no face")
+        self.facecam_calls: list[Path] = []
+        self.facecam_result: Any = None  # render.facecam.FacecamDetection or None (detection could not run)
+        self.face_ratio: float | None = None
+
+    def facecam(self, path: Path) -> Any:
+        self.facecam_calls.append(path)
+        return self.facecam_result
+
+    def face_check(self, clip: Path, panel: Any, duration: float) -> float | None:
+        return self.face_ratio
 
     def probe(self, path: Path) -> ProbeResult:
         p = Path(path)
@@ -110,8 +123,21 @@ class FakeRender:
 
         yield detect
 
+    def motion(self, path: Path, start: float, end: float, w: int, h: int, mask: Any) -> list[Any]:
+        return []  # no motion: stationary centre crops
+
+    def presence(self, path: Path, box: Any, start: float, end: float) -> Any:
+        return self.presence_result
+
     def kwargs(self) -> dict[str, Any]:
-        return {"detector_factory": self.detector, "shots_fn": self.shots, "probe_fn": self.probe, "run": self.run}
+        return {
+            "detector_factory": self.detector,
+            "shots_fn": self.shots,
+            "probe_fn": self.probe,
+            "run": self.run,
+            "motion_fn": self.motion,
+            "presence_fn": self.presence,
+        }
 
 
 def copy_payload(hook: str = "He tried jumping to a helicopter") -> dict[str, Any]:

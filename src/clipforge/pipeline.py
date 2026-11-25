@@ -27,6 +27,12 @@ render/QA error) is already recorded by that module (status + alert); the run co
 source or candidate. An unexpected exception is rolled back, written as a `pipeline_stage_failed` alert, and the run
 moves on. `SpendCapReached` from any paid call stops the whole run and pauses it (COMPLIANCE #12).
 
+Layouts (feat/reframe): before a game clip renders, the source's facecam is resolved once (`resolve_facecam`: the
+campaign's manual `facecam_box`, else the result stored on `sources.facecam_json`, else a detection run that is then
+stored, "none" included, with an events row). The clip row records the layout used and the render time.
+`cf clip relayout` re-renders clips that are still pending review with the current layout code (`relayout_clips`):
+same window, hook and captions, a fresh `rendered_at`, so the bot sends a new preview and any approval must be new.
+
 Render output: `media/clips/<campaign slug>/<account set>/r<UTC stamp>/clip_<candidate id>.mp4` (+ .ass, .manifest.json,
 and `<clip>.preview.mp4` when the clip is over Telegram's 50 MB limit). A re-render writes a new `r<stamp>` folder,
 so a file the database still points at is never overwritten.
@@ -37,8 +43,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -70,10 +77,10 @@ from clipforge.db.migrate import upgrade
 from clipforge.ingest import media
 from clipforge.ingest.download import DownloadError, GDriveClient, download_source
 from clipforge.ingest.inbox import scan_inbox
-from clipforge.ingest.models import set_source_status
+from clipforge.ingest.models import facecam_from_row, set_source_status, store_facecam
 from clipforge.publish.dispatcher import expire_campaign_clips, release_clip
 from clipforge.publish.queries import campaign_model, lineage
-from clipforge.qa.checks import qa_clip
+from clipforge.qa.checks import FaceCheckFn, default_face_check, qa_clip
 from clipforge.qa.preview import TELEGRAM_VIDEO_LIMIT_BYTES, preview_for_telegram
 from clipforge.qa.probe import ProbeError, ProbeResult, probe
 from clipforge.rank.claude_client import ClaudeClient, RankError
@@ -87,6 +94,7 @@ from clipforge.rank.select import shorter_range, text_between
 from clipforge.render.assets import AssetNotFoundError
 from clipforge.render.clip import ClipRequest, render_candidate
 from clipforge.render.encode import RenderError
+from clipforge.render.facecam import FacecamDetection, FacecamSpec, default_detect
 from clipforge.review import alerts
 from clipforge.review.service import ReviewHooks, get_flag, set_flag
 from clipforge.schemas import (
@@ -148,6 +156,8 @@ class PipelineDeps:
     preview_fn: Callable[[Path], Path] = preview_for_telegram
     clock: Callable[[], datetime] = utcnow
     moment_signals: MomentSignalsFn | None = None  # None: ffmpeg loudness + motion passes (rank/media_signals.py)
+    facecam_fn: Callable[[Path], FacecamDetection | None] = default_detect  # once per source (render/facecam.py)
+    qa_face_check: FaceCheckFn = default_face_check  # stacked clips: a face in the rendered facecam panel
 
 
 @dataclass
@@ -349,6 +359,42 @@ class _RenderInputs:
     words: list[Word]
     captions: dict[Platform, str]
     title: str | None
+    source_id: int = 0
+    facecam: FacecamSpec | None = None  # filled by resolve_facecam outside any transaction
+
+
+def resolve_facecam(
+    settings: Settings, factory: sessionmaker[Session], deps: PipelineDeps, source_id: int, campaign: Campaign
+) -> FacecamSpec | None:
+    """The facecam a game clip of this source is laid out with, or None (crop/fit only).
+
+    Order: the campaign's manual `facecam_box`; the detection stored on the source (current detector version); a new
+    detection (no transaction held while it runs), stored with an events row whatever it finds. A detection that
+    could not run (no mediapipe, unreadable media) is not stored and is tried again next time."""
+    if campaign.content_kind != "game" or campaign.layout in ("crop", "fit"):
+        return None
+    if campaign.facecam_box is not None:
+        return FacecamSpec(origin="campaign", box_pct=campaign.facecam_box)
+    with session_scope(factory) as s:
+        src = s.get(SourceRow, source_id)
+        if src is None or not src.local_path:
+            return None
+        stored = facecam_from_row(src)
+        path = Path(src.local_path)
+    if stored is None:
+        started = time.monotonic()
+        detection = deps.facecam_fn(path)
+        if detection is None:
+            return None
+        with session_scope(factory) as s:
+            src = s.get(SourceRow, source_id)
+            if src is None:
+                return None
+            store_facecam(s, src, detection, seconds=time.monotonic() - started)
+        stored = detection
+    if stored.status != "found" or stored.box is None:
+        return None
+    return FacecamSpec(origin="detected", box=stored.box)
 
 
 def _render_and_qa(
@@ -375,6 +421,8 @@ def _render_and_qa(
         account_set=inputs.account_set,
         out_dir=out_dir,
         overlay=inputs.campaign.overlay,
+        layout=inputs.campaign.layout,
+        facecam=inputs.facecam,
     )
     try:
         manifest = render_candidate(req, settings.app, **deps.render_kwargs)
@@ -391,6 +439,7 @@ def _render_and_qa(
         enabled=inputs.account.platforms,
         probe_fn=deps.qa_probe,
         youtube_title=title if title is not None else inputs.title,
+        face_check_fn=deps.qa_face_check,
     )
     return manifest, report
 
@@ -761,6 +810,7 @@ class Pipeline:
             words=list(transcript.words),
             captions=_captions(cand),
             title=cand.title,
+            source_id=src.id,
         )
 
     def _render(self, cand_id: int) -> None:
@@ -779,6 +829,8 @@ class Pipeline:
         if failure is not None:
             self._render_failed(cand_id, failure)
             return
+        facecam = resolve_facecam(self.settings, self.factory, self.deps, inputs.source_id, inputs.campaign)
+        inputs = replace(inputs, facecam=facecam)
         try:
             manifest, report = _render_and_qa(self.settings, self.deps, inputs, start_s=start, end_s=end, hook=hook)
         except RENDER_ERRORS as exc:
@@ -798,10 +850,14 @@ class Pipeline:
                 qa_report_json=report.model_dump(mode="json"),
                 rendered_at=now,
                 created_at=now,
+                layout=manifest.layout,
+                render_s=manifest.timings.get("total"),
             )
             s.add(clip)
             s.flush()
-            record_event(s, "clip", clip.id, None, ClipState.RENDERED.value, detail=f"candidate {cand_id}")
+            record_event(
+                s, "clip", clip.id, None, ClipState.RENDERED.value, detail=f"candidate {cand_id}, layout {clip.layout}"
+            )
             transition(s, cand, ClipState.RENDERED, detail=f"clip {clip.id}")
             self.report.rendered += 1
             if report.passed:
@@ -842,8 +898,9 @@ def run_once(settings: Settings, *, deps: PipelineDeps | None = None) -> RunRepo
 # New hook / Shorter (bot buttons): re-render with a fresh approval required (COMPLIANCE #5)
 # --------------------------------------------------------------------------------------------------
 
-RerenderKind = Literal["new_hook", "shorter"]
+RerenderKind = Literal["new_hook", "shorter", "relayout"]
 REVIEWABLE: frozenset[ClipState] = frozenset({ClipState.PENDING_REVIEW, ClipState.APPROVED, ClipState.SCHEDULED})
+RELAYOUT_STATES: frozenset[ClipState] = frozenset({ClipState.PENDING_REVIEW})  # never approved/published/rejected
 
 
 class RerenderRefused(Exception):
@@ -862,6 +919,7 @@ class RerenderJob:
     old_path: str
     clip_text: str
     used_hooks: tuple[str, ...] = ()  # every hook this clip has had, current one included ("New hook" avoids them)
+    old_layout: str = "fit"
 
 
 def begin_rerender(
@@ -883,6 +941,10 @@ def begin_rerender(
             raise RerenderRefused(f"Clip {clip_id} is already being re-rendered; wait for the new preview.")
         if clip.state not in REVIEWABLE:
             raise RerenderRefused(f"Clip {clip_id} is {clip.state.value}; it can no longer be changed.")
+        if kind == "relayout" and clip.state not in RELAYOUT_STATES:
+            raise RerenderRefused(
+                f"Clip {clip_id} is {clip.state.value}; only clips waiting for review are re-laid out."
+            )
         if s.scalar(select(PostRow.id).where(PostRow.clip_id == clip_id).limit(1)) is not None:
             raise RerenderRefused(f"Clip {clip_id} already has posts; it can no longer be changed.")
         lin = lineage(s, clip)
@@ -925,6 +987,7 @@ def begin_rerender(
             words=list(transcript.words),
             captions=_captions(cand),
             title=cand.title,
+            source_id=src.id,
         )
         return RerenderJob(
             clip_id=clip_id,
@@ -935,6 +998,7 @@ def begin_rerender(
             end_s=end,
             hook=cand.hook or "",
             old_path=clip.path,
+            old_layout=clip.layout or "fit",
             clip_text=text_between(transcript.words, cand.start_s, cand.end_s),
             used_hooks=tuple(h for h in [*(cand.hook_history or []), cand.hook or ""] if h),
         )
@@ -949,6 +1013,8 @@ def finish_rerender(
     deps = deps or PipelineDeps()
     new_path: str | None = None
     try:
+        facecam = resolve_facecam(settings, factory, deps, job.inputs.source_id, job.inputs.campaign)
+        job = replace(job, inputs=replace(job.inputs, facecam=facecam))
         hook, captions, title = job.hook, job.inputs.captions, job.inputs.title
         if job.kind == "new_hook":
             client = _build_claude(settings, factory, deps)
@@ -990,7 +1056,11 @@ def finish_rerender(
         clip.duration_s = manifest.duration_s
         clip.qa_report_json = report.model_dump(mode="json")
         clip.rendered_at = fresh_render_time(s, clip.id, now)  # earlier approvals are now stale (COMPLIANCE #5)
-        if job.kind == "new_hook":
+        clip.layout = manifest.layout
+        clip.render_s = manifest.timings.get("total")
+        if job.kind == "relayout":
+            detail = f"relayout: {job.old_layout} -> {manifest.layout} ({manifest.timings.get('total', 0):.0f}s render)"
+        elif job.kind == "new_hook":
             old_hook = cand.hook
             if old_hook:
                 cand.hook_history = [*(cand.hook_history or []), old_hook]  # new list: JSON columns track assignment
@@ -1002,14 +1072,20 @@ def finish_rerender(
             detail = f"shorter: {cand.start_s:.2f}-{cand.end_s:.2f} -> {job.start_s:.2f}-{job.end_s:.2f}"
             cand.start_s, cand.end_s = job.start_s, job.end_s
         record_event(s, "candidate", cand.id, None, None, actor="operator", detail=detail)
-        transition(s, clip, ClipState.PENDING_REVIEW, actor="operator", detail=f"re-rendered ({job.kind})")
+        done = f"re-rendered ({job.kind}, layout {manifest.layout})"
+        transition(s, clip, ClipState.PENDING_REVIEW, actor="operator", detail=done)
         _make_proxy(settings, deps, s, clip.id, clip.path)
         flag = s.get(FlagRow, f"{RERENDER_FLAG}{job.clip_id}")
         if flag is not None:
             s.delete(flag)
     if job.old_path != manifest.clip_path:
         _remove_render_dir(settings, job.old_path)  # never posted: re-renders start only before publishing
-    what = f"new hook: {hook}" if job.kind == "new_hook" else f"now {job.end_s - job.start_s:.0f}s"
+    if job.kind == "relayout":
+        what = f"layout {job.old_layout} -> {manifest.layout}"
+    elif job.kind == "new_hook":
+        what = f"new hook: {hook}"
+    else:
+        what = f"now {job.end_s - job.start_s:.0f}s"
     return f"Clip {job.clip_id} re-rendered ({what}). The new preview follows; approve that one."
 
 
@@ -1055,6 +1131,7 @@ def _requalify(settings: Settings, deps: PipelineDeps, s: Session, clip: ClipRow
         enabled=enabled,
         probe_fn=deps.qa_probe,
         youtube_title=lin.candidate.title,
+        face_check_fn=deps.qa_face_check,
     )
 
 
@@ -1113,3 +1190,145 @@ def make_review_hooks(
     """The New hook / Shorter callbacks `cf bot` uses (P2.3)."""
     runner = ReviewHookRunner(settings, factory, deps)
     return ReviewHooks(new_hook=runner.new_hook, shorter=runner.shorter)
+
+
+# --------------------------------------------------------------------------------------------------
+# `cf clip relayout`: re-render clips waiting for review with the current layout code
+# --------------------------------------------------------------------------------------------------
+
+
+@dataclass
+class RelayoutResult:
+    clip_id: int
+    source_id: int | None = None
+    old_layout: str = ""
+    new_layout: str = ""
+    layout_reason: str = ""
+    render_s: float | None = None
+    ok: bool = False
+    message: str = ""
+    rendered_at: datetime | None = None
+
+
+def _pending_ids(session: Session) -> list[int]:
+    return list(
+        session.scalars(select(ClipRow.id).where(ClipRow.state == ClipState.PENDING_REVIEW).order_by(ClipRow.id))
+    )
+
+
+def _manifest_of(path: str) -> RenderManifest | None:
+    try:
+        return RenderManifest.model_validate_json(Path(path).with_suffix(".manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def relayout_one(
+    settings: Settings, factory: sessionmaker[Session], clip_id: int, deps: PipelineDeps
+) -> RelayoutResult:
+    """Re-render one PENDING_REVIEW clip (same window, hook, captions) through the New hook / Shorter machinery:
+    fresh `rendered_at`, new preview, old approvals stale, the old file kept if anything fails."""
+    result = RelayoutResult(clip_id=clip_id)
+    try:
+        job = begin_rerender(settings, factory, clip_id, "relayout", deps.clock())
+    except RerenderRefused as exc:
+        result.message = str(exc)
+        return result
+    result.source_id, result.old_layout = job.inputs.source_id, job.old_layout
+    result.message = finish_rerender(settings, factory, job, deps)
+    with session_scope(factory) as s:
+        clip = s.get(ClipRow, clip_id)
+        if clip is not None:
+            result.ok = clip.state is ClipState.PENDING_REVIEW and clip.path != job.old_path
+            result.new_layout = clip.layout or ""
+            result.render_s = clip.render_s
+            result.rendered_at = clip.rendered_at
+            manifest = _manifest_of(clip.path) if result.ok else None
+            if manifest is not None:
+                result.layout_reason = manifest.layout_reason
+    return result
+
+
+def wait_for_previews(
+    factory: sessionmaker[Session], results: Sequence[RelayoutResult], timeout_s: float, poll_s: float = 5.0
+) -> int:
+    """Poll until the bot has sent a preview for each re-rendered clip's current render (or the timeout). Returns how
+    many previews were sent. Read-only: the bot's preview task does the sending (review/previews.py)."""
+    from clipforge.review.previews import preview_flag
+
+    want = {r.clip_id: r.rendered_at for r in results if r.ok and r.rendered_at is not None}
+    deadline = time.monotonic() + timeout_s
+    while True:
+        with session_scope(factory) as s:
+            sent = sum(
+                1 for cid, at in want.items() if at is not None and get_flag(s, preview_flag(cid)) == at.isoformat()
+            )
+        if sent >= len(want) or time.monotonic() >= deadline:
+            return sent
+        time.sleep(poll_s)
+
+
+def relayout_clips(
+    settings: Settings,
+    clip_ids: Sequence[int] = (),
+    *,
+    all_pending: bool = False,
+    dry_run: bool = False,
+    wait_previews_s: float = 0.0,
+    deps: PipelineDeps | None = None,
+) -> list[RelayoutResult]:
+    """`cf clip relayout`: re-render PENDING_REVIEW clips one after another and print what happened. Other states are
+    refused (approved, scheduled, published, rejected and the rest are never touched). Never publishes anything."""
+    from rich.console import Console
+
+    console = Console()
+    deps = deps or PipelineDeps()
+    upgrade(settings.database_url)
+    engine = make_engine(settings.database_url)
+    try:
+        factory = make_session_factory(engine)
+        with session_scope(factory) as s:
+            ids = list(dict.fromkeys([*clip_ids, *(_pending_ids(s) if all_pending else [])]))
+            if dry_run:
+                rows: list[RelayoutResult] = []
+                for cid in ids:
+                    clip = s.get(ClipRow, cid)
+                    if clip is None:
+                        rows.append(RelayoutResult(clip_id=cid, message="no such clip"))
+                        continue
+                    lin = lineage(s, clip)
+                    ok = clip.state in RELAYOUT_STATES
+                    rows.append(
+                        RelayoutResult(
+                            clip_id=cid,
+                            source_id=lin.source.id,
+                            old_layout=clip.layout or "fit",
+                            ok=ok,
+                            message=f"{clip.state.value}; campaign {lin.campaign.name} (layout {lin.campaign.layout})"
+                            + ("" if ok else "; would be refused"),
+                        )
+                    )
+        if dry_run:
+            for r in rows:
+                console.print(f"clip {r.clip_id}: source {r.source_id}, layout {r.old_layout}: {r.message}")
+            console.print(f"dry run: {sum(r.ok for r in rows)} of {len(rows)} clip(s) would be re-rendered.")
+            return rows
+        results = []
+        for cid in ids:
+            r = relayout_one(settings, factory, cid, deps)
+            results.append(r)
+            if r.ok:
+                console.print(
+                    f"clip {cid}: source {r.source_id}, {r.old_layout} -> {r.new_layout}, "
+                    f"render {r.render_s or 0:.1f}s" + (f" ({r.layout_reason})" if r.layout_reason else "")
+                )
+            else:
+                console.print(f"[red]clip {cid}: not re-rendered: {r.message}[/red]")
+        done = [r for r in results if r.ok]
+        console.print(f"{len(done)} of {len(results)} clip(s) re-rendered.")
+        if wait_previews_s > 0 and done:
+            sent = wait_for_previews(factory, done, wait_previews_s)
+            console.print(f"{sent} of {len(done)} preview(s) resent to Telegram.")
+        return results
+    finally:
+        engine.dispose()

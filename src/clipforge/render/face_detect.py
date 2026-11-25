@@ -87,6 +87,36 @@ class MediaPipeFaceDetector:
             cap.release()
 
 
+class MediaPipeImageDetector:
+    """Faces in one RGB image (numpy HxWx3 uint8), in that image's pixels. Used for facecam detection (on tiles of
+    a frame) and for the facecam presence checks (render, QA)."""
+
+    def __init__(self, *, model_path: Path | None = None, min_confidence: float = 0.5) -> None:
+        import mediapipe as mp
+
+        options = mp.tasks.vision.FaceDetectorOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path or face_model_path())),
+            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+            min_detection_confidence=min_confidence,
+        )
+        self._mp = mp
+        self._detector: Any = mp.tasks.vision.FaceDetector.create_from_options(options)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
+    ) -> None:
+        self._detector.close()
+
+    def __call__(self, rgb: Any) -> list[FaceBox]:
+        import numpy as np
+
+        image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgb))
+        return [_to_box(d) for d in self._detector.detect(image).detections]
+
+
 def _to_box(detection: Any) -> FaceBox:
     bb = detection.bounding_box
     score = detection.categories[0].score if detection.categories else None
