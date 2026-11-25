@@ -112,26 +112,57 @@ def _fake_placement(opaque: Rect) -> co.OverlayPlacement:
     return co.OverlayPlacement(path=Path("x.png"), rect=opaque, opaque_rect=opaque, width=2, height=2, sha256="0")
 
 
-def test_ad_label_default_top_left_without_overlay() -> None:
-    ad = co.place_ad_label("Ad", None)
-    assert (ad.alignment, ad.x, ad.y) == (7, 48, 120)
+def test_ad_label_default_left_under_the_hook(app_config: AppConfig) -> None:
+    ad = co.place_ad_label("Ad", None, app_config.styles.values())
+    assert (ad.alignment, ad.x, ad.y) == (7, 48, 548)
+    hook = co.hook_band(app_config.styles.values())
+    assert ad.rect.y0 >= hook.y1 + co.MARGIN_PX  # under the hook's worst case (3 lines, largest preset)
+    assert ad.rect.y0 >= co.UI_TOP_PX  # below TikTok's top 150 px
+    assert ad.rect.y1 <= co.caption_band(app_config.styles.values()).y0 - co.MARGIN_PX
+    assert co.ad_label_problems(ad.rect, app_config.styles.values(), None) == []
 
 
-def test_ad_label_stays_top_left_when_overlay_is_clear(root: Path) -> None:
-    ad = co.place_ad_label("Ad", placement(root))
-    assert (ad.alignment, ad.x, ad.y) == (7, 48, 120)
+def test_ad_label_stays_put_when_overlay_is_clear(root: Path, app_config: AppConfig) -> None:
+    ad = co.place_ad_label("Ad", placement(root), app_config.styles.values())
+    assert (ad.alignment, ad.x, ad.y) == (7, 48, 548)
     assert not ad.rect.intersects(placement(root).opaque_rect)
 
 
-def test_ad_label_moves_clear_of_an_overlay_in_its_spot() -> None:
-    ad = co.place_ad_label("Ad", _fake_placement(Rect(x0=0, y0=100, x1=400, y1=220)))
-    assert (ad.alignment, ad.x, ad.y) == (9, 1032, 120)  # top-right
-    assert not ad.rect.intersects(Rect(x0=0, y0=100, x1=400, y1=220))
+def test_ad_label_moves_under_an_overlay_in_its_spot(app_config: AppConfig) -> None:
+    covering = Rect(x0=0, y0=520, x1=400, y1=640)
+    ad = co.place_ad_label("Ad", _fake_placement(covering), app_config.styles.values())
+    assert (ad.alignment, ad.x) == (7, 48)
+    assert ad.y == 640 + co.MARGIN_PX + 12
+    assert not ad.rect.intersects(covering)
 
 
-def test_ad_label_refused_when_no_spot_is_clear() -> None:
-    with pytest.raises(co.OverlayPlacementError, match="no place for the 'Ad' label"):
-        co.place_ad_label("Ad", _fake_placement(Rect(x0=0, y0=0, x1=1080, y1=300)))
+def test_ad_label_refused_when_no_spot_is_clear(app_config: AppConfig) -> None:
+    with pytest.raises(co.OverlayPlacementError, match="no clear place for the 'Ad' label"):
+        co.place_ad_label("Ad", _fake_placement(Rect(x0=0, y0=500, x1=400, y1=1200)), app_config.styles.values())
+
+
+def test_ad_label_follows_a_bigger_hook_style(app_config: AppConfig) -> None:
+    """A larger style preset pushes the hook's worst case lower; the label moves under it, never into it."""
+    data = app_config.model_dump(by_alias=True)
+    data["styles"]["huge"] = {**data["styles"]["bold-yellow"], "size": 110}
+    styles = type(app_config).model_validate(data).styles.values()
+    ad = co.place_ad_label("Ad", None, styles)
+    assert ad.rect.y0 >= co.hook_band(styles).y1 + co.MARGIN_PX
+    assert co.ad_label_problems(ad.rect, styles, None) == []
+
+
+def test_label_style_has_a_dark_box() -> None:
+    from dataclasses import replace
+
+    from clipforge.render.overlays import ad_label_style, has_dark_box
+
+    style = ad_label_style("Montserrat-ExtraBold")
+    assert has_dark_box(style)
+    assert style.outline_colour == "&H40000000"  # 75 % opaque black box
+    assert not has_dark_box(replace(style, border_style=1))  # outline only, no box
+    assert not has_dark_box(replace(style, outline_colour="&HC0000000"))  # box mostly transparent
+    assert not has_dark_box(replace(style, outline_colour="&H40FFFFFF"))  # white box
+    assert not has_dark_box(replace(style, outline=2))  # no padding
 
 
 # --- resolve (files) -------------------------------------------------------------------------------------

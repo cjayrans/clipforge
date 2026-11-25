@@ -1,8 +1,9 @@
 """Hook text and "Ad" label overlays (ARCHITECTURE §4.4; COMPLIANCE invariant 3).
 
-- "Ad" label: top-left (moved to another top spot if a campaign overlay is there), from 0.0 s to
+- "Ad" label: left edge, just below the hook's largest possible box (out of the platform UI zones: TikTok's top
+  150 px, right 15 %, bottom 20 %), on a semi-opaque dark box so it reads on bright or busy footage. From 0.0 s to
   `render.ad_label_seconds` (config validation keeps it ≥ 3.0 s), text `render.ad_label_text`. Always present,
-  whatever the hook.
+  whatever the hook. `render.campaign_overlay.place_ad_label` picks the spot and checks it.
 - Hook: top third, 0 → `render.hook_seconds`, wrapped to short lines, in the account's style-preset font.
 
 Both are ASS events burned in by the same `ass` filter as the captions; the encoder records them in the
@@ -18,7 +19,10 @@ from clipforge.render.ass import AssEvent, AssStyle, ass_colour, escape_text
 
 AD_LABEL_STYLE = "AdLabel"
 HOOK_STYLE = "Hook"
-AD_LABEL_POS = (48, 120)  # top-left, below the phone status bar
+AD_LABEL_POS = (48, 548)  # left edge, under the hook's worst case (y <= 525) and out of the top UI zone
+AD_LABEL_SIZE = 48
+AD_LABEL_PAD = 12  # box padding (BorderStyle 3 uses the outline width as padding)
+AD_LABEL_BOX_ALPHA = 0x40  # ASS alpha of the box: 0x00 opaque .. 0xFF clear; 0x40 = 75 % opaque black
 HOOK_Y_PCT = 18.0  # top third
 HOOK_LINE_CHARS = 16
 HOOK_MAX_LINES = 3
@@ -58,20 +62,40 @@ def wrap_hook(text: str, line_chars: int = HOOK_LINE_CHARS, max_lines: int = HOO
     return lines
 
 
+def ad_label_style(font: str) -> AssStyle:
+    """White text on a semi-opaque dark box (BorderStyle 3: libass fills the box with the outline colour)."""
+    dark = ass_colour("#000000", alpha=AD_LABEL_BOX_ALPHA)
+    return AssStyle(
+        name=AD_LABEL_STYLE,
+        font=font,
+        size=AD_LABEL_SIZE,
+        primary=ass_colour("#FFFFFF"),
+        outline_colour=dark,
+        back_colour=dark,
+        border_style=3,
+        outline=AD_LABEL_PAD,
+        shadow=0,
+        alignment=7,
+    )
+
+
+def has_dark_box(style: AssStyle) -> bool:
+    """True if the style draws an opaque-enough dark box behind white text (alpha <= 0x60, i.e. >= 62 % opaque)."""
+    box = style.outline_colour  # &HAABBGGRR
+    alpha, rgb = int(box[2:4], 16), box[4:]
+    return (
+        style.border_style == 3
+        and style.outline >= 8
+        and alpha <= 0x60
+        and max(int(rgb[i : i + 2], 16) for i in (0, 2, 4)) <= 0x30
+        and style.primary.endswith("FFFFFF")
+    )
+
+
 def overlay_styles(style: Style) -> list[AssStyle]:
     box = style.box or "#000000"
     return [
-        AssStyle(
-            name=AD_LABEL_STYLE,
-            font=style.font,
-            size=48,
-            primary=ass_colour("#FFFFFF"),
-            outline_colour=ass_colour("#000000", alpha=0x50),
-            back_colour=ass_colour("#000000", alpha=0x50),
-            border_style=3,
-            outline=10,
-            alignment=7,
-        ),
+        ad_label_style(style.font),
         AssStyle(
             name=HOOK_STYLE,
             font=style.font,

@@ -30,7 +30,7 @@ from clipforge.render.encode import (
     run_ffmpeg,
     sha256_file,
 )
-from clipforge.render.overlays import AD_LABEL_STYLE, HOOK_STYLE, overlay_events, overlay_styles
+from clipforge.render.overlays import AD_LABEL_STYLE, HOOK_STYLE, has_dark_box, overlay_events, overlay_styles
 from clipforge.render.reframe import Detector, plan_crops
 from clipforge.render.shots import Shot, detect_shots
 from clipforge.schemas import CampaignOverlay, OverlayManifest, RenderManifest, Word
@@ -118,16 +118,20 @@ def render_candidate(
             placement = campaign_overlay.resolve(
                 req.overlay, project_root(), app.styles.values(), app.render.ad_label_text
             )
-        ad_at = campaign_overlay.place_ad_label(app.render.ad_label_text, placement)
+        ad_at = campaign_overlay.place_ad_label(app.render.ad_label_text, placement, app.styles.values())
     except campaign_overlay.OverlayPlacementError as exc:
         raise RenderError(f"campaign overlay: {exc}") from exc
     overlay_evts = overlay_events(req.hook, app.render, ad_label_at=(ad_at.alignment, ad_at.x, ad_at.y))
     ad = next(e for e in overlay_evts if e.style == AD_LABEL_STYLE)
     hook = next((e for e in overlay_evts if e.style == HOOK_STYLE), None)
-    doc = ass_document([caption_style, *overlay_styles(style)], [*caption_evts, *overlay_evts])
+    styles = [caption_style, *overlay_styles(style)]
+    doc = ass_document(styles, [*caption_evts, *overlay_evts])
     # Invariant 3: claim the label only if its exact Dialogue line and its style are in the file libass will burn.
     doc_lines = doc.splitlines()
     has_ad_label = ad.line() in doc_lines and any(line.startswith(f"Style: {AD_LABEL_STYLE},") for line in doc_lines)
+    # The dark box is claimed only if the exact style line that draws it is in the file.
+    ad_style = next(st for st in styles if st.name == AD_LABEL_STYLE)
+    ad_label_box = has_dark_box(ad_style) and ad_style.line() in doc_lines
 
     req.out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"clip_{req.candidate_id}"
@@ -173,6 +177,8 @@ def render_candidate(
         audio_source_only=False,
         sha256="",
         ad_label_rect=ad_at.rect,
+        ad_label_layout=compliance.AD_LABEL_LAYOUT,
+        ad_label_box=ad_label_box,
         overlay=overlay_manifest,
     )
     args = build_ffmpeg_args(

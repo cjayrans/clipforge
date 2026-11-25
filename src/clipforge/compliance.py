@@ -39,6 +39,7 @@ from clipforge.schemas import (
     CampaignStatus,
     Evening,
     Platform,
+    Rect,
     RenderManifest,
     SourceHost,
 )
@@ -63,6 +64,26 @@ MIN_CLIP_S = 10.0
 MAX_CLIP_S = 90.0
 RENDER_WIDTH = 1080
 RENDER_HEIGHT = 1920
+# Platform UI zones in the 1080x1920 frame (TikTok: status bar and tabs on top, action rail on the right,
+# description and music bar at the bottom). The "Ad" label (layout 2+) and any campaign overlay stay out of them.
+UI_TOP_PX = 150
+UI_RIGHT_PCT = 15.0
+UI_BOTTOM_PCT = 20.0
+# Render manifests from AD_LABEL_LAYOUT on record where the label was drawn and that it sits on a dark box; older
+# manifests (layout 1: label at the top-left corner, before 2026-11-25) keep only the timing checks, so clips already
+# reviewed or approved are not re-judged by rules they were not rendered under.
+AD_LABEL_LAYOUT = 2
+
+
+def ui_zones() -> dict[str, Rect]:
+    right_x = round(RENDER_WIDTH * (1 - UI_RIGHT_PCT / 100))
+    bottom_y = round(RENDER_HEIGHT * (1 - UI_BOTTOM_PCT / 100))
+    return {
+        f"platform UI (top {UI_TOP_PX} px)": Rect(x0=0, y0=0, x1=RENDER_WIDTH, y1=UI_TOP_PX),
+        f"platform UI (right {UI_RIGHT_PCT:g} %)": Rect(x0=right_x, y0=0, x1=RENDER_WIDTH, y1=RENDER_HEIGHT),
+        f"platform UI (bottom {UI_BOTTOM_PCT:g} %)": Rect(x0=0, y0=bottom_y, x1=RENDER_WIDTH, y1=RENDER_HEIGHT),
+    }
+
 
 POLITICAL_BLOCKED_PLATFORMS: frozenset[Platform] = frozenset({Platform.TIKTOK, Platform.X})
 
@@ -383,7 +404,27 @@ def render_manifest_problems(manifest: RenderManifest) -> list[str]:
     if (manifest.width, manifest.height) != (RENDER_WIDTH, RENDER_HEIGHT):
         problems.append(f"resolution {manifest.width}x{manifest.height}, expected {RENDER_WIDTH}x{RENDER_HEIGHT}")
     problems.extend(duration_problems(manifest.duration_s))
+    problems.extend(ad_label_placement_problems(manifest))
     problems.extend(overlay_problems(manifest))
+    return problems
+
+
+def ad_label_placement_problems(manifest: RenderManifest) -> list[str]:
+    """Invariant 3, layout 2+: the label's recorded box is inside the frame, outside every platform UI zone, and the
+    label is drawn on a semi-opaque dark box (readable on bright or busy footage)."""
+    if manifest.ad_label_layout < AD_LABEL_LAYOUT:
+        return []
+    r = manifest.ad_label_rect
+    if r is None:
+        return ["no recorded 'Ad' label position"]
+    problems: list[str] = []
+    if r.x0 < 0 or r.y0 < 0 or r.x1 > RENDER_WIDTH or r.y1 > RENDER_HEIGHT:
+        problems.append("'Ad' label runs outside the frame")
+    for name, zone in ui_zones().items():
+        if r.intersects(zone):
+            problems.append(f"'Ad' label is under the {name}")
+    if not manifest.ad_label_box:
+        problems.append("'Ad' label has no semi-opaque dark background box")
     return problems
 
 

@@ -123,12 +123,14 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
   `schemas.CropPlan` (per shot: mode, x, w, h).
 - `captions.py` (pure): word chunks of 2–4 words, ≤ 18 chars per line; ASS file with per-word highlight (`\k` or
   per-word events); safe zone: captions centered at 62–70% height (clear of platform UI at the bottom ~20%).
-- `overlays.py`: hook text (top third) 0–2.5 s; "Ad" label top-left 0–3 s; style preset (font, size, colors, outline)
+- `overlays.py`: hook text (top third) 0–2.5 s; "Ad" label 0–3 s at the left edge under the hook's largest box (default
+  (48, 548); out of the platform UI zones) on a 75 %-opaque dark box; style preset (font, size, colors, outline)
   from `config.styles[account_set]`. Fonts are OFL-licensed and bundled in `assets/fonts/`.
 - `campaign_overlay.py` (pure core): a campaign's overlay image (RGBA PNG). Scales it to `scale` × 1080 px, centres it
   on `position`, finds its visible box (alpha > 16) and refuses any placement whose visible box meets the caption
   band, the hook box, the frame edge or the platform UI zones (top 150 px, right 15 %, bottom 20 %). The "Ad" label
-  goes to the first fixed top spot clear of it (top-left, top-right, top-centre) or the render is refused. Nothing is
+  goes to the first left-edge spot clear of it, the hook, the captions and the UI zones (default under the hook, else
+  under the overlay) or the render is refused. Nothing is
   ever shrunk or moved to make it fit.
 - `encode.py`: one ffmpeg filtergraph per shot then concat, or a single graph with `trim`+`crop`+`concat`;
   `-c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k`, `loudnorm=I=-14:TP=-1.5:LRA=11`.

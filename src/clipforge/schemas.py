@@ -480,6 +480,10 @@ class RenderManifest(BaseModel):
     # Where the "Ad" label was drawn, and the campaign overlay if the campaign has one (invariant 3: never overlap).
     ad_label_rect: Rect | None = None
     overlay: OverlayManifest | None = None
+    # Label layout version (compliance.AD_LABEL_LAYOUT). 1 = before 2026-11-25 (top-left corner, under the platform
+    # UI); 2 = below the hook, out of the platform UI zones, on a semi-opaque dark box. Older manifests default to 1.
+    ad_label_layout: int = Field(default=1, ge=1)
+    ad_label_box: bool = Field(default=False, description="The label style draws a semi-opaque dark box behind it.")
 
 
 class QACheck(BaseModel):
