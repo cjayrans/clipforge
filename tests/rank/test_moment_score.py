@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from clipforge import costs
 from clipforge.rank.claude_client import ClaudeClient
 from clipforge.rank.moment_score import (
     MomentItem,
@@ -288,3 +289,20 @@ def test_rank_moments_with_nothing_triggered_calls_no_api(fake: FakeAnthropic, c
     assert result.candidates == []
     assert fake.requests == []
     assert "0 sent to the ranker" in result.detail()
+
+
+def test_spend_cap_stops_the_moment_ranker_before_any_request(
+    fake: FakeAnthropic, client: ClaudeClient, profile, session
+) -> None:
+    costs.pause(session, "test cap")
+    session.commit()
+    with pytest.raises(costs.SpendCapReached):
+        rank_moments(
+            transcript(REACTION_SCRIPT),
+            campaign_in(),
+            [Platform.TIKTOK],
+            profile,
+            client=client,
+            loudness_db=loudness(spikes={31: -8.0, 32: -10.0, 66: -9.0}),
+        )
+    assert fake.requests == []

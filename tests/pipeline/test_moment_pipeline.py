@@ -22,7 +22,7 @@ from clipforge.rank.profile import SignalRules
 from clipforge.review.views import preview_caption
 from clipforge.schemas import ClipState, SourceStatus
 from tests.rank.anthropic_mock import FakeAnthropic
-from tests.rank.moment_fakes import REACTION_SCRIPT, loudness, motion, transcript
+from tests.rank.moment_fakes import REACTION_SCRIPT, echo_moments, loudness, motion, transcript
 from tests.support.pipeline_fakes import GROQ_URL, SOURCE_URL
 from tests.support.pipeline_fixtures import add_campaign
 
@@ -157,3 +157,32 @@ def test_campaign_without_profile_keeps_the_window_ranker(
     assert {r["tools"][0]["name"] for r in anthropic.requests if r.get("tools")} == {"score_windows"}
     with session_scope(db) as s:
         assert all(r.archetype is None for r in s.scalars(select(CandidateRow)))
+
+
+def test_flagged_clip_still_waits_for_review_with_a_manual_check_line(
+    pipe_settings: Settings,
+    db: sessionmaker[Session],
+    deps: PipelineDeps,
+    anthropic: FakeAnthropic,
+    reaction_http: respx.MockRouter,
+) -> None:
+    default = anthropic.default
+    assert default is not None
+    flagged = echo_moments(lambda cid, s, e, t: {"review_flags": ["sexual"]})
+
+    def respond(body: dict[str, Any]) -> Any:
+        if body.get("tools") and body["tools"][0]["name"] == "score_moments":
+            return flagged(body)
+        return default(body)
+
+    anthropic.default = respond
+    add_campaign(db, pipe_settings, moment_profile="gta6-streamer")
+    report = run_once(pipe_settings, deps=replace(deps, moment_signals=good_signals()))
+    assert report.ready >= 1
+    with session_scope(db) as s:
+        clips = s.scalars(select(ClipRow).order_by(ClipRow.id)).all()
+        assert clips
+        for clip in clips:
+            assert clip.state is ClipState.PENDING_REVIEW  # flagged, not rejected, and not approved
+            assert "CHECK BEFORE APPROVING: flagged sexual" in preview_caption(s, pipe_settings, clip)
+        assert all(r.review_flags == ["sexual"] for r in s.scalars(select(CandidateRow)))

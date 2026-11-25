@@ -36,6 +36,9 @@ def preview_caption(session: Session, settings: Settings, clip: ClipRow) -> str:
             f"Moment: {cand.archetype} | reaction {cand.score_reaction}, event {cand.score_event}, "
             f"setup {cand.score_setup}, absurdity {cand.score_absurdity}"
         )
+    skips = [str(f) for f in cand.skip_flags or []]
+    if skips:  # only penalising skip rules reach review; rejecting ones drop the candidate
+        lines.append(f"Skip rules (score lowered): {', '.join(skips)}")
     flags = [str(f) for f in cand.review_flags or []]
     if flags:
         lines.append(f"CHECK BEFORE APPROVING: flagged {'; '.join(flags)}")

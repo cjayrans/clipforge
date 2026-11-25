@@ -90,12 +90,17 @@ def test_report_groups_by_archetype(factory: Factory, session: Session, settings
 
 
 def test_preview_shows_the_moment_and_the_manual_check(factory: Factory, session: Session, settings: Settings) -> None:
-    cand = factory.candidate(hook="He sold his car", archetype="blunder", review_flags=["sexual"])
+    cand = factory.candidate(
+        hook="He sold his car", archetype="blunder", review_flags=["sexual"], skip_flags=["cutscene_part"]
+    )
     cand.score_reaction, cand.score_event, cand.score_setup, cand.score_absurdity = 9, 6, 7, 8
     clip = factory.clip(cand)
     text = preview_caption(session, settings, clip)
     assert "Moment: blunder | reaction 9, event 6, setup 7, absurdity 8" in text
-    assert text.splitlines()[-1] == "CHECK BEFORE APPROVING: flagged sexual"
+    assert text.splitlines()[-2:] == [
+        "Skip rules (score lowered): cutscene_part",
+        "CHECK BEFORE APPROVING: flagged sexual",
+    ]
     plain = factory.clip(factory.candidate(hook="talk"))
     assert "Moment:" not in preview_caption(session, settings, plain)
     assert "CHECK" not in preview_caption(session, settings, plain)
