@@ -72,3 +72,36 @@ def test_overlay_input_pads_and_flags() -> None:
     j = args.index("-filter_complex") + 1
     for extra in (";[1]anull", ";[1:1]aresample=48000", ";[0]anull", ";[ 1:a]anull", ";[0x1]anull", ";[ 0:a]anull"):
         assert not maps_only_source_audio([*args[:j], args[j] + extra, *args[j + 1 :]])
+
+
+def test_layout_filtergraphs_map_only_source_audio() -> None:
+    """Stacked (split, two crops, vstack) and a moving crop (x expression in t), with a campaign overlay: still only
+    the source's audio; an injected audio pad or audio filter is refused."""
+    from clipforge.render.encode import OverlayInput, build_ffmpeg_args, maps_only_source_audio
+    from clipforge.schemas import CropKeyframe, CropMode, CropPlan, PxBox, ShotCrop
+    from tests.compliance._helpers import manifest
+
+    kf = [CropKeyframe(t=0, x=100), CropKeyframe(t=4, x=900), CropKeyframe(t=10, x=900)]
+    plan = CropPlan(
+        src_w=1920,
+        src_h=1080,
+        shots=[
+            ShotCrop(
+                start_s=0, end_s=10, mode=CropMode.STACKED, x=100, w=910, h=1080, camera="tracking",
+                keyframes=kf, facecam=PxBox(x=1400, y=700, w=444, h=264),
+            ),
+            ShotCrop(
+                start_s=10, end_s=35, mode=CropMode.GAME_CROP, x=100, w=606, h=1080, camera="tracking",
+                keyframes=kf,
+            ),
+        ],
+    )  # fmt: skip
+    ov = OverlayInput(path="/repo/campaigns/assets/x/banner.png", width=648, height=216, x=216, y=497)
+    args = build_ffmpeg_args(manifest(), crop_plan=plan, overlay=ov)
+    graph = args[args.index("-filter_complex") + 1]
+    assert "vstack=inputs=2" in graph
+    assert "x='if(" in graph
+    assert maps_only_source_audio(args)
+    i = args.index("-filter_complex") + 1
+    for bad in (graph.replace("[0:v]", "[0:a]", 1), graph + ";[0:v]asplit[x]", graph.replace("vstack", "amix", 1)):
+        assert not maps_only_source_audio([*args[:i], bad, *args[i + 1 :]])

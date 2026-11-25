@@ -135,6 +135,14 @@ class CropMode(StrEnum):
     FACE = "face"
     CENTER = "center"
     FIT_BLUR = "fit_blur"
+    # Layouts (feat/reframe): a full-height 9:16 gameplay crop, and the facecam-on-top stack.
+    GAME_CROP = "game_crop"
+    STACKED = "stacked"
+
+
+# Campaign layout setting ("auto" picks stacked > crop > fit per clip) and the layout a clip was rendered with.
+LayoutName = Literal["auto", "stacked", "crop", "fit"]
+RenderedLayout = Literal["fit", "crop", "stacked"]
 
 
 class SourceHost(StrEnum):
@@ -198,6 +206,24 @@ class CampaignOverlay(BaseModel):
         return v
 
 
+class FacecamBoxPct(BaseModel):
+    """Manual facecam box of a campaign's footage, in percent of the source frame (top-left corner and size), so it
+    holds for any VOD resolution. Overrides facecam detection (render.facecam)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    x_pct: float = Field(ge=0, lt=100)
+    y_pct: float = Field(ge=0, lt=100)
+    w_pct: float = Field(gt=0, le=100)
+    h_pct: float = Field(gt=0, le=100)
+
+    @model_validator(mode="after")
+    def _inside_frame(self) -> FacecamBoxPct:
+        if self.x_pct + self.w_pct > 100 + 1e-9 or self.y_pct + self.h_pct > 100 + 1e-9:
+            raise ValueError("facecam_box runs outside the frame (x_pct + w_pct and y_pct + h_pct must be <= 100)")
+        return self
+
+
 class CampaignIn(BaseModel):
     """What the operator registers from a campaign brief (Claude chat produces this JSON)."""
 
@@ -254,6 +280,18 @@ class CampaignIn(BaseModel):
     # Added for moment selection (docs/research/clipping-gta6-moment-types.md): the name of a file in
     # config/moment_profiles/ (archetypes, weights, gates, window rules). None keeps the transcript-window ranker.
     moment_profile: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
+    # Added for layouts (feat/reframe): how game footage is laid out in the 9:16 frame. "auto": facecam on top of a
+    # gameplay crop when a facecam is found, else a full-height gameplay crop, else the blurred-background fit.
+    layout: LayoutName = "auto"
+    facecam_box: FacecamBoxPct | None = Field(
+        default=None, description="Manual facecam box (percent of the source frame); skips facecam detection."
+    )
+
+    @model_validator(mode="after")
+    def _layout_fits_content(self) -> CampaignIn:
+        if self.content_kind == "talk" and self.layout == "stacked":
+            raise ValueError("layout 'stacked' needs game footage with a facecam (content_kind 'game')")
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -457,6 +495,22 @@ class Candidate(BaseModel):
 # --------------------------------------------------------------------------------------------------
 
 
+class PxBox(BaseModel):
+    """A box in source pixels (x/y top-left)."""
+
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    w: int = Field(gt=0)
+    h: int = Field(gt=0)
+
+
+class CropKeyframe(BaseModel):
+    """Left edge of a moving crop at `t` seconds after the shot starts (linear in between)."""
+
+    t: float = Field(ge=0)
+    x: int = Field(ge=0)
+
+
 class ShotCrop(BaseModel):
     start_s: float
     end_s: float
@@ -464,6 +518,12 @@ class ShotCrop(BaseModel):
     x: int = Field(ge=0, description="Left edge of the crop in source pixels (ignored for fit_blur).")
     w: int = Field(gt=0)
     h: int = Field(gt=0)
+    # Layouts (feat/reframe). game_crop / stacked: the gameplay crop's top edge, its camera mode and, when it moves,
+    # its path (keyframes; `x` is then the first position). stacked: the facecam box drawn in the top panel.
+    y: int = Field(default=0, ge=0)
+    camera: Literal["stationary", "tracking"] = "stationary"
+    keyframes: list[CropKeyframe] = Field(default_factory=list)
+    facecam: PxBox | None = None
 
 
 class CropPlan(BaseModel):
@@ -518,6 +578,16 @@ class RenderManifest(BaseModel):
     # UI); 2 = below the hook, out of the platform UI zones, on a semi-opaque dark box. Older manifests default to 1.
     ad_label_layout: int = Field(default=1, ge=1)
     ad_label_box: bool = Field(default=False, description="The label style draws a semi-opaque dark box behind it.")
+    # Layouts (feat/reframe; label layout 3). Older manifests read as "fit" with no recorded geometry.
+    layout: RenderedLayout = "fit"
+    layout_reason: str = Field(default="", description="Why this layout (e.g. why auto skipped stacked).")
+    hook_rect: Rect | None = Field(default=None, description="Box reserved for the hook (largest possible size).")
+    caption_rect: Rect | None = Field(default=None, description="Band every caption line stays inside.")
+    face_rect: Rect | None = Field(default=None, description="Stacked: the streamer's face in the output frame.")
+    facecam_rect: Rect | None = Field(default=None, description="Stacked: the facecam panel in the output frame.")
+    crop_plan: CropPlan | None = None
+    max_pan_px_s: float | None = Field(default=None, description="Pan speed limit of moving crops, source px/s.")
+    timings: dict[str, float] = Field(default_factory=dict, description="Render stage times in seconds.")
 
 
 class QACheck(BaseModel):

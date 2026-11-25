@@ -115,8 +115,11 @@ def overlay_events(
     cfg: RenderConfig,
     play_res: tuple[int, int] = (1080, 1920),
     ad_label_at: tuple[int, int, int] = (7, *AD_LABEL_POS),
+    hook_cy: int | None = None,
 ) -> list[AssEvent]:
-    """`ad_label_at` = (ASS alignment, x, y); render.campaign_overlay moves it clear of a campaign overlay."""
+    """`ad_label_at` = (ASS alignment, x, y) and `hook_cy` (the hook's centre y) come from
+    render.campaign_overlay.place_texts, which keeps them clear of a campaign overlay and, in the stacked layout,
+    of the streamer's face."""
     ad = ad_label_event(cfg)
     align, x, y = ad_label_at
     events = [
@@ -126,6 +129,7 @@ def overlay_events(
     ]
     h = hook_event(hook, cfg)
     if h is not None:
-        pos = f"{{\\an5\\pos({play_res[0] // 2},{round(HOOK_Y_PCT / 100 * play_res[1])})}}"
+        cy = round(HOOK_Y_PCT / 100 * play_res[1]) if hook_cy is None else hook_cy
+        pos = f"{{\\an5\\pos({play_res[0] // 2},{cy})}}"
         events.append(AssEvent(h.start_s, h.end_s, HOOK_STYLE, pos + "\\N".join(wrap_hook(h.text)), HOOK_LAYER))
     return events

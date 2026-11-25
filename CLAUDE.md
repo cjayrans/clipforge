@@ -26,8 +26,9 @@ note in your summary, because four parallel branches depend on it.
   Never download from YouTube, Kick or any other platform, even if registered: refuse and alert. Footage is licensed to Carson
   only for that campaign; never reuse it elsewhere.
 - Accounts start as TikTok + Instagram (`config/clipforge.yaml`, profile `gaming-1`). YouTube and X are config switches.
-- Game footage often has no face: default to the blurred-background fit (PRD F16). Silent footage is unsupported;
-  flag it (PRD F17), don't produce weak clips.
+- Game footage: campaign `layout` (default `auto`: facecam stacked over a gameplay crop when a facecam is found, else a
+  9:16 gameplay crop, else the blurred-background fit; PRD F16). Silent footage is unsupported; flag it (PRD F17),
+  don't produce weak clips.
 - A campaign's footage link may be a folder. Register each file separately; still download only registered URLs.
 - Pay differs per platform and by viewer country (PRD F15). Never assume one CPM.
 

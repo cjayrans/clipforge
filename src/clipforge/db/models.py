@@ -166,6 +166,8 @@ class CampaignRow(Base):
     stream_channels: Mapped[list[Any]] = mapped_column(JSON, default=list)
     max_source_minutes: Mapped[int | None] = mapped_column(Integer)
     moment_profile: Mapped[str | None] = mapped_column(String(64))
+    layout: Mapped[str] = mapped_column(String(16), default="auto", server_default="auto")
+    facecam_box: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     status: Mapped[CampaignStatus] = mapped_column(
         _enum(CampaignStatus, "campaign_status"), default=CampaignStatus.ACTIVE
     )
@@ -189,6 +191,8 @@ class SourceRow(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     downloaded_at: Mapped[datetime | None] = mapped_column()
     purged_at: Mapped[datetime | None] = mapped_column()
+    # Facecam detection result (render.facecam.FacecamDetection as JSON, "none" included), computed once per source.
+    facecam_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
 class TranscriptRow(Base):
@@ -258,6 +262,8 @@ class ClipRow(Base):
     rendered_at: Mapped[datetime] = mapped_column(default=utcnow)
     review_message_id: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    layout: Mapped[str | None] = mapped_column(String(16))  # schemas.RenderedLayout of the current render
+    render_s: Mapped[float | None] = mapped_column(Float)  # wall time of the current render
 
     @validates("state")
     def _check_state(self, _key: str, value: ClipState | str) -> ClipState:

@@ -63,6 +63,8 @@ TARGETS: dict[str, Target] = {
     "source add": Target("ingest.registry", "add_source", "Phase 1 A (feat/ingest-transcribe)"),
     "source retry": Target("ingest.registry", "retry_source", "Phase 2 (P2.1)"),
     "source rerank": Target("ingest.registry", "rerank_source", "feat/source-rerank"),
+    "source facecam": Target("ingest.registry", "source_facecam", "feat/reframe"),
+    "clip relayout": Target("pipeline", "relayout_clips", "feat/reframe"),
     "worker": Target("scheduler.worker", "run_worker", "Phase 1 D (feat/ops)"),
     "bot": Target("review.bot", "run_bot", "Phase 1 D (feat/ops)"),
     "report weekly": Target("track.reports", "weekly_report", "Phase 1 D (feat/ops)"),
@@ -149,11 +151,13 @@ source_app = typer.Typer(no_args_is_help=True, help="Footage sources.")
 report_app = typer.Typer(no_args_is_help=True, help="Reports.")
 db_app = typer.Typer(no_args_is_help=True, help="Database maintenance.")
 post_app = typer.Typer(no_args_is_help=True, help="Posts.")
+clip_app = typer.Typer(no_args_is_help=True, help="Rendered clips.")
 app.add_typer(campaign_app, name="campaign")
 app.add_typer(source_app, name="source")
 app.add_typer(report_app, name="report")
 app.add_typer(db_app, name="db")
 app.add_typer(post_app, name="post")
+app.add_typer(clip_app, name="clip")
 
 
 @app.callback()
@@ -220,6 +224,22 @@ def source_rerank(ctx: typer.Context, source_id: int) -> None:
     _delegate(ctx, "source rerank", source_id)
 
 
+@source_app.command("facecam")
+def source_facecam(
+    ctx: typer.Context,
+    source_id: int,
+    redetect: Annotated[
+        bool, typer.Option("--redetect", help="Run detection again even if a result is stored.")
+    ] = False,
+    debug_image: Annotated[
+        Path | None,
+        typer.Option(help="Write a JPEG of a sample frame with the face/facecam boxes (and a *_stacked.jpg preview)."),
+    ] = None,
+) -> None:
+    """Show the facecam box of a source (detecting it if needed; stored on the source)."""
+    _delegate(ctx, "source facecam", source_id, redetect=redetect, debug_image=debug_image)
+
+
 @source_app.command("retry")
 def source_retry(ctx: typer.Context, source_id: int) -> None:
     """Put a failed source back in the queue; the next nightly run downloads it again."""
@@ -243,6 +263,34 @@ def post_repair(
     if not apply:
         console.print("dry run: nothing changed. Add --apply to repair.")
     if any(not r.ok for r in results):
+        raise typer.Exit(EXIT_CHECK_FAILED)
+
+
+@clip_app.command("relayout")
+def clip_relayout(
+    ctx: typer.Context,
+    clip_ids: Annotated[list[int] | None, typer.Argument(help="Clip ids (pending review only).")] = None,
+    all_pending: Annotated[bool, typer.Option("--all-pending", help="Every clip waiting for review.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="List what would be re-rendered; change nothing.")] = False,
+    wait_previews: Annotated[
+        float, typer.Option(help="Seconds to wait for the bot to resend the Telegram previews (0 = don't wait).")
+    ] = 0.0,
+) -> None:
+    """Re-render clips waiting for review with the current layout (same window, hook and captions). The bot sends a
+    new preview for each; approve that one. Approved, scheduled, published and rejected clips are never touched."""
+    if not clip_ids and not all_pending:
+        err.print("Give clip ids or --all-pending.")
+        raise typer.Exit(EXIT_CONFIG)
+    results = _delegate(
+        ctx,
+        "clip relayout",
+        list(clip_ids or []),
+        with_session=False,
+        all_pending=all_pending,
+        dry_run=dry_run,
+        wait_previews_s=wait_previews,
+    )
+    if not dry_run and any(not r.ok for r in results):
         raise typer.Exit(EXIT_CHECK_FAILED)
 
 

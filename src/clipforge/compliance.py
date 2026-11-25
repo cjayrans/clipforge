@@ -69,10 +69,14 @@ RENDER_HEIGHT = 1920
 UI_TOP_PX = 150
 UI_RIGHT_PCT = 15.0
 UI_BOTTOM_PCT = 20.0
-# Render manifests from AD_LABEL_LAYOUT on record where the label was drawn and that it sits on a dark box; older
-# manifests (layout 1: label at the top-left corner, before 2026-11-25) keep only the timing checks, so clips already
-# reviewed or approved are not re-judged by rules they were not rendered under.
-AD_LABEL_LAYOUT = 2
+# Label layout of new renders. Layout 2+ manifests record where the label was drawn and that it sits on a dark box;
+# layout 3+ (feat/reframe: stacked / crop / fit layouts) also record the hook box, the caption band and, in the stacked
+# layout, the streamer's face, and those must keep clear of each other (`layout_geometry_problems`). Older manifests
+# (layout 1: label at the top-left corner, before 2026-11-25) keep only the timing checks, so clips already reviewed or
+# approved are not re-judged by rules they were not rendered under.
+AD_LABEL_LAYOUT = 3
+AD_LABEL_PLACEMENT_FROM = 2
+LAYOUT_GEOMETRY_FROM = 3
 
 
 def ui_zones() -> dict[str, Rect]:
@@ -406,13 +410,14 @@ def render_manifest_problems(manifest: RenderManifest) -> list[str]:
     problems.extend(duration_problems(manifest.duration_s))
     problems.extend(ad_label_placement_problems(manifest))
     problems.extend(overlay_problems(manifest))
+    problems.extend(layout_geometry_problems(manifest))
     return problems
 
 
 def ad_label_placement_problems(manifest: RenderManifest) -> list[str]:
     """Invariant 3, layout 2+: the label's recorded box is inside the frame, outside every platform UI zone, and the
     label is drawn on a semi-opaque dark box (readable on bright or busy footage)."""
-    if manifest.ad_label_layout < AD_LABEL_LAYOUT:
+    if manifest.ad_label_layout < AD_LABEL_PLACEMENT_FROM:
         return []
     r = manifest.ad_label_rect
     if r is None:
@@ -444,6 +449,55 @@ def overlay_problems(manifest: RenderManifest) -> list[str]:
             f"campaign overlay shown {ov.start_s:.2f}-{ov.end_s:.2f}s, must cover the whole clip "
             f"(0.00-{manifest.duration_s:.2f}s)"
         )
+    return problems
+
+
+def _ui_zone(edge: str) -> Rect:
+    return next(zone for name, zone in ui_zones().items() if f"({edge} " in name)
+
+
+def layout_geometry_problems(manifest: RenderManifest) -> list[str]:
+    """Invariant 3, label layout 3+ (any of the stacked / crop / fit layouts): the hook box, caption band, "Ad" label,
+    campaign overlay and (stacked) the streamer's face are recorded and keep clear of each other:
+    - the hook, the "Ad" label and the overlay's visible pixels never cover the face;
+    - the "Ad" label overlaps neither the hook box nor the caption band;
+    - the hook, the captions and the "Ad" label never cover the overlay's visible pixels (it stays unobstructed);
+    - the captions and the hook stay out of the top and bottom platform UI zones (the label's own UI check is
+      `ad_label_placement_problems`)."""
+    if manifest.ad_label_layout < LAYOUT_GEOMETRY_FROM:
+        return []
+    problems: list[str] = []
+    hook, captions, face = manifest.hook_rect, manifest.caption_rect, manifest.face_rect
+    if manifest.hook_text and hook is None:
+        problems.append("no recorded hook position")
+    if captions is None:
+        problems.append("no recorded caption band")
+    if manifest.layout == "stacked" and (face is None or manifest.facecam_rect is None):
+        problems.append("stacked layout without a recorded facecam panel and face")
+    top, bottom = _ui_zone("top"), _ui_zone("bottom")
+    for name, rect in (("caption band", captions), ("hook", hook)):
+        if rect is None:
+            continue
+        if rect.x0 < 0 or rect.y0 < 0 or rect.x1 > RENDER_WIDTH or rect.y1 > RENDER_HEIGHT:
+            problems.append(f"the {name} runs outside the frame")
+        if rect.intersects(bottom):
+            problems.append(f"the {name} is under the platform UI (bottom {UI_BOTTOM_PCT:g} %)")
+        if rect.intersects(top):
+            problems.append(f"the {name} is under the platform UI (top {UI_TOP_PX} px)")
+    label = manifest.ad_label_rect
+    if label is not None:
+        for name, rect in (("hook", hook), ("caption band", captions)):
+            if rect is not None and label.intersects(rect):
+                problems.append(f"the 'Ad' label overlaps the {name}")
+    ov = manifest.overlay.opaque_rect if manifest.overlay is not None else None
+    if face is not None:
+        for name, rect in (("hook", hook), ("'Ad' label", manifest.ad_label_rect), ("campaign overlay", ov)):
+            if rect is not None and rect.intersects(face):
+                problems.append(f"the {name} covers the streamer's face")
+    if ov is not None:
+        for name, rect in (("hook", hook), ("caption band", captions)):
+            if rect is not None and rect.intersects(ov):
+                problems.append(f"the {name} covers the campaign overlay")
     return problems
 
 

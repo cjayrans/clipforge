@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from clipforge.db import CampaignRow, SourceRow, record_event
 from clipforge.db.transitions import Actor
 from clipforge.ingest.alerts import redact_urls
+from clipforge.render.facecam import DETECTOR_VERSION, FacecamDetection
 from clipforge.schemas import Campaign, CampaignIn, Source, SourceStatus
 
 # CampaignIn field -> CampaignRow column, where they differ.
@@ -65,3 +66,34 @@ def set_source_status(
         detail=redact_urls(detail or (fail_reason or "")),
     )
     session.flush()
+
+
+def facecam_from_row(row: SourceRow) -> FacecamDetection | None:
+    """The facecam detection stored on a source, or None when there is none for the current detector version."""
+    data = row.facecam_json
+    if not isinstance(data, dict):
+        return None
+    detection = FacecamDetection.from_json(data)
+    return detection if detection.version == DETECTOR_VERSION else None
+
+
+def store_facecam(
+    session: Session,
+    row: SourceRow,
+    detection: FacecamDetection,
+    *,
+    seconds: float | None = None,
+    actor: Actor = "system",
+) -> None:
+    """Store a facecam detection on the source (found or none) with an `events` row."""
+    row.facecam_json = detection.to_json()
+    took = f" in {seconds:.0f}s" if seconds is not None else ""
+    record_event(
+        session,
+        "source",
+        row.id,
+        row.status.value,
+        row.status.value,
+        actor=actor,
+        detail=f"{detection.summary()}{took}",
+    )
