@@ -3,6 +3,7 @@
     uv run python scripts/bench_render.py [SOURCE] [--windows 4] [--length 60] [--kind talk|game]
         [--transcript words.json] [--account gaming-1] [--config config/clipforge.example.yaml] [--out DIR]
         [--audio] [--json FILE] [--label NAME] [--clips-per-source 8] [--sources 2] [--source-minutes 60]
+        [--layout auto|stacked|crop|fit] [--facecam-box X,Y,W,H] [--assume-face]
 
 SOURCE defaults to tests/fixtures/synthetic_90s.mp4. Run it inside the Docker image with the worker's CPU limit
 (`docker run --cpus 6 ...`) for real numbers: ffmpeg, libass and mediapipe differ from the Mac and from CI. Footage
@@ -11,9 +12,14 @@ under tests/fixtures/local/ is git-ignored; never commit campaign footage.
 Stages timed (download is never included):
 - `hash`    SHA-256 of the whole source (ingest registers every file by hash). Only with `--audio`.
 - `audio`   audio extraction + chunk cutting for transcription (`transcribe.audio`), whole source. Only with `--audio`.
-- per rendered clip: `shots` (PySceneDetect), `face` (MediaPipe sampling, `--kind talk` only), `encode` (the one
+- per rendered clip: `shots` (PySceneDetect), `face` (MediaPipe sampling, `--kind talk` only), `saliency` (the
+  gameplay crop's motion pass, crop/stacked layouts), `facecam` (the stacked layout's per-clip facecam check), `encode`
+  (the one
   ffmpeg run: trim/crop/blur, libass burn-in of captions + hook + "Ad" label, x264, loudnorm), `probe` (ffprobe),
   `qa_io` (the QA gate's own re-probe + SHA-256 of the clip), `other` (everything else in `render_candidate`).
+Layouts (`--kind game`): `--layout` as a campaign would set it. `--facecam-box` (percent of the source frame) gives a
+facecam like a campaign's manual box; `--assume-face` makes the per-clip facecam check report a face (the synthetic
+fixture has none), so the stacked filtergraph can be timed on it. Both are benchmark-only.
 Without `--transcript` every window gets synthetic caption words (~2.5 words/s) so the libass caption path is
 exercised the way it is on a real clip; the words carry no meaning and nothing about the source is read.
 
@@ -39,7 +45,7 @@ REPO = Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = REPO / "tests" / "fixtures" / "synthetic_90s.mp4"
 DEFAULT_CONFIG = REPO / "config" / "clipforge.example.yaml"
 
-RENDER_STAGES = ("shots", "face", "encode", "probe", "qa_io", "other")
+RENDER_STAGES = ("shots", "face", "saliency", "facecam", "encode", "probe", "qa_io", "other")
 WORDS_PER_SECOND = 2.5  # ~150 wpm, the pace of dense commentary
 
 
@@ -120,6 +126,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--sources", type=int, default=2, help="projection: sources per night")
     p.add_argument("--source-minutes", type=float, default=60.0, help="projection: minutes per source")
     p.add_argument("--clips-per-source", type=int, default=8, help="projection: clips rendered per source (worst case)")
+    p.add_argument("--layout", choices=["auto", "stacked", "crop", "fit"], default="auto")
+    p.add_argument("--facecam-box", help="x,y,w,h in percent of the source frame (like a campaign facecam_box)")
+    p.add_argument("--assume-face", action="store_true", help="benchmark only: the facecam check reports a face")
     return p.parse_args(argv)
 
 
@@ -151,8 +160,10 @@ def main(argv: list[str] | None = None) -> int:
     from clipforge.qa.probe import probe
     from clipforge.render.clip import ClipRequest, mediapipe_detector, render_candidate
     from clipforge.render.encode import run_ffmpeg, sha256_file
+    from clipforge.render.facecam import FacecamSpec, Presence, default_presence
+    from clipforge.render.saliency import motion_samples
     from clipforge.render.shots import detect_shots
-    from clipforge.schemas import Transcript, Word
+    from clipforge.schemas import FacecamBoxPct, PxBox, Transcript, Word
 
     app = load_app_config(args.config)
     transcript_words: list[Word] | None = None
@@ -160,6 +171,16 @@ def main(argv: list[str] | None = None) -> int:
         transcript_words = Transcript.model_validate(json.loads(args.transcript.read_text())).words
     source_s = probe(args.source).duration_s
     starts = window_starts(source_s, args.length, args.windows)
+    facecam = None
+    if args.facecam_box:
+        x, y, w, h = (float(v) for v in args.facecam_box.split(","))
+        facecam = FacecamSpec(origin="campaign", box_pct=FacecamBoxPct(x_pct=x, y_pct=y, w_pct=w, h_pct=h))
+
+    def presence(path: Path, box: PxBox, start: float, end: float) -> Presence:
+        if not args.assume_face:
+            return default_presence(path, box, start, end)
+        face = PxBox(x=int(box.w * 0.38), y=int(box.h * 0.25), w=int(box.w * 0.24), h=int(box.h * 0.42))
+        return Presence(ratio=1.0, samples=1, face=face)
 
     tmp = tempfile.TemporaryDirectory(prefix="bench_render_")
     out_dir = args.out or Path(tmp.name) / "clips"
@@ -168,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         "source": args.source.name,
         "source_s": source_s,
         "kind": args.kind,
+        "layout": args.layout,
         "windows": [],
         "render": app.render.model_dump() if hasattr(app.render, "model_dump") else {},
     }
@@ -197,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             req = ClipRequest(
                 candidate_id=i + 1, source_path=args.source, start_s=start, end_s=end, words=words,
                 hook="Benchmark hook text here", content_kind=args.kind, account_set=args.account, out_dir=out_dir,
+                layout=args.layout, facecam=facecam,
             )  # fmt: skip
             t = Timers()
 
@@ -216,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
                 shots_fn=t.wrap("shots", detect_shots),
                 probe_fn=t.wrap("probe", probe),
                 run=t.wrap("encode", run_ffmpeg),
+                presence_fn=t.wrap("facecam", presence),
+                motion_fn=t.wrap("saliency", motion_samples),
             )
             wall = time.perf_counter() - t0
             with t.span("qa_io"):
@@ -234,7 +259,11 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 raise SystemExit("benchmark render lost the 'Ad' label (invariant 3); refusing to report timings")
             result["windows"].append({"start_s": start, "wall_s": wall, "out_s": manifest.duration_s, **parts})
-            print(f"  window {i + 1}: {start:8.1f}s  {wall:6.1f}s wall  {wall / manifest.duration_s:5.2f} s/s")
+            result["windows"][-1]["layout"] = manifest.layout
+            print(
+                f"  window {i + 1}: {start:8.1f}s  {wall:6.1f}s wall  {wall / manifest.duration_s:5.2f} s/s"
+                f"  layout {manifest.layout}"
+            )
 
         per_out_s = {k: total.seconds.get(k, 0.0) / total_out for k in RENDER_STAGES}
         result["s_per_output_second"] = per_out_s

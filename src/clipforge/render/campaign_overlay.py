@@ -12,6 +12,11 @@ Rules (each one raises `OverlayPlacementError`; nothing here ever shrinks or mov
 - the "Ad" label is drawn at the first spot clear of the hook, captions, UI zones and the opaque rect (default: left
   edge just under the hook). If no spot is clear, the render is refused.
 The overlay is composited before the `ass` filter, so the label, hook and captions are drawn on top of it anyway.
+
+Layouts (label layout 3, `place_texts`): the same rules per layout, plus the streamer's face as a keep-out in the
+stacked layout. There the hook may move from its default spot to just under the overlay or the facecam panel, and the
+label's first spot is the panel's top-left corner just under the top UI zone. Default layouts (crop, fit) get exactly
+the layout-2 positions.
 """
 
 from __future__ import annotations

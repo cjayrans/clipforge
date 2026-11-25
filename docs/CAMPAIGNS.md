@@ -62,6 +62,14 @@ Everything campaign-specific is data. A new campaign is one JSON file plus its a
      visible part lands and refuses a placement that would cover the captions, the hook, the platform UI (top
      150 px, right 15 %, bottom 20 %) or leave no spot for the "Ad" label. Fix the numbers in the JSON; the code never
      moves or shrinks it.
+   - `layout` (game footage): `auto` (default), `stacked`, `crop` or `fit`. `auto` puts the streamer's facecam on
+     top (1080x640) over a gameplay crop (1080x1280) when a facecam is found and a face is in it for the clip, else a
+     full-height 9:16 gameplay crop, else the whole frame over a blurred copy; each clip records the layout used and
+     why better ones were skipped. A set layout is used or the render is refused. `stacked` needs `content_kind:
+     game`. Talk footage keeps the face crop.
+   - `facecam_box`: `{"x_pct": .., "y_pct": .., "w_pct": .., "h_pct": ..}` (top-left corner and size in percent of
+     the source frame). Only when facecam detection gets it wrong; check what detection found with
+     `cf source facecam <source id> --debug-image <file>.jpg`.
    - `allow_stream_download` (only when the rules say so), `stream_channels` (Twitch logins the footage may come
      from; a VOD is matched on its channel login, a clip on the channel's display name lowercased, so a clip from a
      channel whose display name differs from its login is refused: the safe direction), `max_source_minutes` (download only the first N minutes), `source_urls`.

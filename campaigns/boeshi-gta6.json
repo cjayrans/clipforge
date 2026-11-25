@@ -29,6 +29,7 @@
     "scale": 0.6,
     "full_duration": true
   },
+  "layout": "auto",
   "unpaid_viewer_countries": [],
   "priority": 1,
   "rules_notes": "ClipLaunch campaign on Content Rewards (Whop). Rules from the operator's summary of the brief on 2026-11-24; the Notion brief (https://app.notion.com/p/Boeshi-Clipping-Full-Rules-Brief-4158e335832381febd29c4548e838f42) was not readable by Claude. Footage: Boeshi's recent Twitch VODs (twitch.tv/darealboeshi only). The Boeshi overlay must be visible for the whole clip. Caption must include twitch.tv/darealboeshi. Account requirements: 40%+ tier-1 audience and 0.8% engagement. Each clip must stay live for 30 days. No more than 5 near-identical clips. No engagement bait. Pay: $1.00 per 1,000 views, max $300 per clip; budget $1,750 total, about $1,618 left (8% paid) on 2026-11-24. NOT YET READ: min payout, participant count and approval rate (stored as 0/unknown)."

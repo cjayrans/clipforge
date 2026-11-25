@@ -136,7 +136,26 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
 - `reframe.py` (pure core): for each shot sample 5 fps, MediaPipe FaceDetector → face boxes; choose the largest face
   (v1); crop x-center = median of its centers; crop width = src_h × 9/16. If no face, or the two largest faces' centers
   are further apart than the crop width → `fit_blur` mode (scaled source over blurred, zoomed copy). Output
-  `schemas.CropPlan` (per shot: mode, x, w, h).
+  `schemas.CropPlan` (per shot: mode, x, w, h). Talk footage only (game footage uses the layouts below).
+- `layout.py` (pure): the layouts of game footage and the order they are tried. Campaign `layout: auto` →
+  **stacked** (facecam box scaled into a 1080×640 top panel, gameplay crop at 1080:1280 below, `vstack`) when a
+  facecam is known, then **crop** (full-height 9:16 gameplay crop), then **fit** (`fit_blur`). A layout is skipped
+  when its prerequisites fail (stacked: a face in the facecam box in ≥ 60 % of the clip's sampled frames; crop: the
+  source is wider than 9:16) or when `campaign_overlay.place_texts` cannot place hook, label, captions and overlay
+  clear of each other, the platform UI and the face; the reasons go to `manifest.layout_reason`.
+- `facecam.py`: once per source, 40 frames sampled over the source (first/last 5 % skipped), MediaPipe on
+  overlapping tiles (BlazeFace short-range sees 128×128, so a small facecam face needs tiling), NMS; pure core
+  `pick_facecam` clusters face centres across frames (in-game faces move, the facecam does not), median face box,
+  padded to the panel aspect (2.4 × face height, face 45 % down). Stored on `sources.facecam_json` ("none" too).
+  A campaign `facecam_box` (percent of the frame) skips detection. Per clip, `face_presence` checks the box really
+  shows a face over the clip window. `cf source facecam <id> --debug-image` draws what was found.
+- `saliency.py` + `crop_path.py` (pure): AutoFlip-style gameplay camera. One ffmpeg pass per clip (4 fps, 192 px
+  grey) → per-sample column profile of the hottest frame-difference pixels (facecam masked). Per shot: stationary
+  centre by default; stationary at the median when concentrated motion holds still off-centre; tracking only when
+  concentrated motion leaves the centre window in ≥ 30 % of the shot and moves (median filter, dead zone, rate limit
+  at 15 % of the source width per second, moving average, clamped, simplified to keyframes; the encoder turns them
+  into a piecewise-linear `crop` x expression in `t`). Global camera motion is never "concentrated", so it never moves
+  the crop. In the crop layout a shot whose motion splits into two far-apart spots gets the fit.
 - `captions.py` (pure): word chunks of 2–4 words, ≤ 18 chars per line; ASS file with per-word highlight (`\k` or
   per-word events); safe zone: captions centered at 62–70% height (clear of platform UI at the bottom ~20%).
 - `overlays.py`: hook text (top third) 0–2.5 s; "Ad" label 0–3 s at the left edge under the hook's largest box (default
