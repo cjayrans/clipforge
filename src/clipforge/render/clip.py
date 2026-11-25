@@ -16,11 +16,13 @@ from typing import Literal
 from clipforge import compliance
 from clipforge.config import AppConfig
 from clipforge.qa.probe import ProbeResult, probe
+from clipforge.render import campaign_overlay
 from clipforge.render.ass import ass_document, escape_text
-from clipforge.render.assets import fonts_dir, missing_fonts
+from clipforge.render.assets import fonts_dir, missing_fonts, project_root
 from clipforge.render.captions import build_captions
 from clipforge.render.encode import (
     EncodeSettings,
+    OverlayInput,
     RenderError,
     Runner,
     build_ffmpeg_args,
@@ -31,7 +33,7 @@ from clipforge.render.encode import (
 from clipforge.render.overlays import AD_LABEL_STYLE, HOOK_STYLE, overlay_events, overlay_styles
 from clipforge.render.reframe import Detector, plan_crops
 from clipforge.render.shots import Shot, detect_shots
-from clipforge.schemas import RenderManifest, Word
+from clipforge.schemas import CampaignOverlay, OverlayManifest, RenderManifest, Word
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +51,7 @@ class ClipRequest:
     content_kind: Literal["talk", "game"]
     account_set: str
     out_dir: Path
+    overlay: CampaignOverlay | None = None  # the campaign's overlay image, if it has one
 
 
 @contextlib.contextmanager
@@ -107,7 +110,18 @@ def render_candidate(
     caption_style, caption_evts = build_captions(req.words, req.start_s, req.end_s, style)
     if not escape_text(app.render.ad_label_text):
         raise RenderError("render.ad_label_text is blank; the 'Ad' label must be visible (invariant 3)")
-    overlay_evts = overlay_events(req.hook, app.render)
+    # Campaign overlay: placed and checked (never covers captions, hook or platform UI); the "Ad" label goes to the
+    # first spot clear of it (invariant 3). Any conflict refuses the render; nothing is shrunk or moved silently.
+    placement = None
+    try:
+        if req.overlay is not None:
+            placement = campaign_overlay.resolve(
+                req.overlay, project_root(), app.styles.values(), app.render.ad_label_text
+            )
+        ad_at = campaign_overlay.place_ad_label(app.render.ad_label_text, placement)
+    except campaign_overlay.OverlayPlacementError as exc:
+        raise RenderError(f"campaign overlay: {exc}") from exc
+    overlay_evts = overlay_events(req.hook, app.render, ad_label_at=(ad_at.alignment, ad_at.x, ad_at.y))
     ad = next(e for e in overlay_evts if e.style == AD_LABEL_STYLE)
     hook = next((e for e in overlay_evts if e.style == HOOK_STYLE), None)
     doc = ass_document([caption_style, *overlay_styles(style)], [*caption_evts, *overlay_evts])
@@ -120,6 +134,27 @@ def render_candidate(
     clip_path = req.out_dir / f"{stem}.mp4"
     ass_path = req.out_dir / f"{stem}.ass"
     ass_path.write_text(doc, encoding="utf-8")
+
+    overlay_input: OverlayInput | None = None
+    overlay_manifest: OverlayManifest | None = None
+    if placement is not None and req.overlay is not None:
+        start = 0.0 if req.overlay.full_duration else min(app.render.hook_seconds, duration)
+        overlay_input = OverlayInput(
+            path=placement.path,
+            width=placement.width,
+            height=placement.height,
+            x=placement.rect.x0,
+            y=placement.rect.y0,
+            start_s=start,
+        )
+        overlay_manifest = OverlayManifest(
+            image_sha256=placement.sha256,
+            rect=placement.rect,
+            opaque_rect=placement.opaque_rect,
+            start_s=start,
+            end_s=duration,
+            full_duration=req.overlay.full_duration,
+        )
 
     planned = RenderManifest(
         clip_path=str(clip_path),
@@ -137,6 +172,8 @@ def render_candidate(
         hook_end_s=hook.end_s if hook else 0.0,
         audio_source_only=False,
         sha256="",
+        ad_label_rect=ad_at.rect,
+        overlay=overlay_manifest,
     )
     args = build_ffmpeg_args(
         planned,
@@ -146,18 +183,25 @@ def render_candidate(
         ass_path=ass_path,
         fonts_dir=fonts_dir(),
         settings=EncodeSettings.from_config(app.render),
+        overlay=overlay_input,
     )
     audio_only = maps_only_source_audio(args)
     if not audio_only:
         raise RenderError("encoder would map audio other than the source track (invariant 10)")
 
+    if placement is not None and sha256_file(placement.path) != placement.sha256:
+        raise RenderError("campaign overlay file changed after it was checked; render refused")
     log.info("rendering candidate %s (%.1fs, %d shots)", req.candidate_id, duration, len(plan.shots))
     run(args)
 
     out = probe_fn(clip_path)
+    actual = round(out.duration_s, 3)
+    if overlay_manifest is not None:  # eof_action=repeat keeps the image up until the last frame
+        overlay_manifest = overlay_manifest.model_copy(update={"end_s": actual})
     manifest = planned.model_copy(
         update={
-            "duration_s": round(out.duration_s, 3),
+            "overlay": overlay_manifest,
+            "duration_s": actual,
             "sha256": sha256_file(clip_path),
             "audio_source_only": audio_only,
         }

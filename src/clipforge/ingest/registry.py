@@ -31,6 +31,8 @@ from clipforge.db import CampaignRow, SourceRow, record_event
 from clipforge.ingest import alerts
 from clipforge.ingest.folders import FolderListError, list_gdrive_folder
 from clipforge.ingest.models import campaign_from_row, campaign_row_values, set_source_status
+from clipforge.render import campaign_overlay
+from clipforge.render.assets import project_root
 from clipforge.schemas import CampaignIn, CampaignStatus, Platform, QACheck, SourceHost, SourceStatus, slugify
 
 log = logging.getLogger(__name__)
@@ -75,6 +77,36 @@ def load_campaign_json(path: Path | str) -> CampaignIn:
         raise RegistryError(f"{p} does not match schemas.CampaignIn:\n" + "\n".join(lines)) from exc
 
 
+def validate_campaign_setup(campaign: CampaignIn, settings: Settings) -> None:
+    """Checks that need config or files, run before a campaign is saved, so a bad JSON fails at `cf campaign add`
+    instead of at render or publish time.
+
+    - Invariant 9: X captions carry no URL, so a campaign whose required caption text contains a URL (a channel
+      link) cannot list X.
+    - Invariant 3 / overlay: the overlay file exists, is an RGBA PNG under campaigns/assets/, and its visible part
+      misses the captions, the hook, the platform UI zones, and leaves a spot for the "Ad" label.
+    """
+    url_tags = [t for t in campaign.required_tags if compliance.contains_url(t)]
+    if url_tags and Platform.X in campaign.allowed_platforms:
+        raise RegistryError(
+            f"required caption text {url_tags} contains a URL, which X captions may not carry (invariant 9): "
+            "remove x from allowed_platforms"
+        )
+    if campaign.overlay is not None:
+        try:
+            placement = campaign_overlay.resolve(
+                campaign.overlay, project_root(), settings.app.styles.values(), settings.app.render.ad_label_text
+            )
+        except campaign_overlay.OverlayPlacementError as exc:
+            raise RegistryError(f"overlay: {exc}") from exc
+        ad = campaign_overlay.place_ad_label(settings.app.render.ad_label_text, placement)
+        o = placement.opaque_rect
+        console.print(
+            f"overlay {campaign.overlay.path}: visible area x {o.x0}-{o.x1}, y {o.y0}-{o.y1} "
+            f"(clear of captions, hook and platform UI); 'Ad' label at ({ad.x}, {ad.y})"
+        )
+
+
 def upsert_campaign(session: Session, campaign: CampaignIn) -> tuple[CampaignRow, bool]:
     """Insert, or update the campaign with the same slug. Status and created_at are never changed here.
 
@@ -99,6 +131,7 @@ def upsert_campaign(session: Session, campaign: CampaignIn) -> tuple[CampaignRow
 def add_campaign_from_json(session: Session, settings: Settings, path: Path | str) -> CampaignRow:
     """`cf campaign add --from-json`: validate against CampaignIn, upsert by slug, register its `source_urls`."""
     campaign = load_campaign_json(path)
+    validate_campaign_setup(campaign, settings)
     row, created = upsert_campaign(session, campaign)
     verb = "registered" if created else "updated"
     console.print(f"{verb} campaign {row.id}: {row.name} [{row.status.value}] (inbox/{row.slug}/)")

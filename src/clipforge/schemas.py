@@ -11,7 +11,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 # --------------------------------------------------------------------------------------------------
 # Enums
@@ -161,6 +161,43 @@ class SourceHost(StrEnum):
 Usd = Annotated[float, Field(ge=0)]
 
 
+class OverlayPosition(BaseModel):
+    """Centre of a campaign overlay image, in percent of the 1080x1920 frame."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    x_pct: float = Field(default=50.0, ge=0, le=100)
+    y_pct: float = Field(ge=0, le=100)
+
+
+class CampaignOverlay(BaseModel):
+    """A campaign-supplied image (PNG with alpha) composited over every clip of that campaign.
+
+    Render places it, keeps the "Ad" label clear of it and refuses any placement that would cover the captions,
+    the hook or the platform UI zones (render.campaign_overlay). The file lives under `campaigns/assets/` and is
+    not committed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, description="Repo-relative path, under campaigns/assets/, of a .png file.")
+    position: OverlayPosition
+    scale: float = Field(gt=0, le=1, description="Image width as a fraction of the 1080 px frame width.")
+    full_duration: bool = Field(
+        default=True, description="True: shown for the whole clip. False: shown from the end of the hook."
+    )
+
+    @field_validator("path")
+    @classmethod
+    def _path_under_assets(cls, v: str) -> str:
+        parts = v.replace("\\", "/").split("/")
+        if v.startswith("/") or ".." in parts or parts[:2] != ["campaigns", "assets"] or len(parts) < 3:
+            raise ValueError("overlay.path must be a relative path under campaigns/assets/")
+        if not v.lower().endswith(".png"):
+            raise ValueError("overlay.path must be a .png file")
+        return v
+
+
 class CampaignIn(BaseModel):
     """What the operator registers from a campaign brief (Claude chat produces this JSON)."""
 
@@ -171,13 +208,17 @@ class CampaignIn(BaseModel):
     url: HttpUrl
     submission_url: HttpUrl
     cpm_usd: Usd
-    min_payout_usd: Usd = 0.0
-    min_views_per_post: int = Field(default=0, ge=0)
+    min_payout_usd: Usd = Field(default=0.0, description="null in the JSON (not known yet) is stored as 0.")
+    min_views_per_post: int = Field(default=0, ge=0, description="null in the JSON is stored as 0.")
     per_clip_cap_usd: Usd | None = None
     budget_remaining_usd: Usd | None = None
     approval_rate_pct: float | None = Field(default=None, ge=0, le=100)
     allowed_platforms: list[Platform] = Field(min_length=1)
-    required_tags: list[str] = Field(default_factory=list)
+    required_tags: list[str] = Field(
+        default_factory=list,
+        description="Text every caption must end with (tags, or a link like a channel URL), in this order. "
+        "The JSON may also call it `required_caption_tags`.",
+    )
     disclosure_text: str = "#ad"
     rules_notes: str = ""
     is_political: bool = False
@@ -197,6 +238,44 @@ class CampaignIn(BaseModel):
     )
     participants: int | None = Field(default=None, ge=0)
     budget_total_usd: Usd | None = None
+    # Added for campaigns with an overlay, a caption tone or stream-only footage. All optional and generic: a new
+    # campaign is one JSON file (plus its assets), never a code change.
+    overlay: CampaignOverlay | None = None
+    copy_style_notes: str = Field(
+        default="", max_length=1000, description="Tone for hooks and captions from the brief, fed to the copy prompt."
+    )
+    stream_channels: list[str] = Field(
+        default_factory=list,
+        description="Twitch channel logins whose VODs may be downloaded; empty = any registered Twitch URL.",
+    )
+    max_source_minutes: int | None = Field(
+        default=None, ge=1, description="Download only the first N minutes of a stream source (Twitch)."
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _caption_tags_alias(cls, data: object) -> object:
+        """`required_caption_tags` is another name for `required_tags` (one of the two, not both)."""
+        if isinstance(data, dict) and "required_caption_tags" in data:
+            if "required_tags" in data:
+                raise ValueError("give required_tags or required_caption_tags, not both")
+            data = {**data, "required_tags": data["required_caption_tags"]}
+            del data["required_caption_tags"]
+        return data
+
+    @field_validator("min_payout_usd", "min_views_per_post", mode="before")
+    @classmethod
+    def _unknown_is_zero(cls, v: object) -> object:
+        return 0 if v is None else v
+
+    @field_validator("stream_channels")
+    @classmethod
+    def _channel_logins(cls, v: list[str]) -> list[str]:
+        out = [c.strip().lower() for c in v if c.strip()]
+        for c in out:
+            if not re.fullmatch(r"[a-z0-9_]{1,25}", c):
+                raise ValueError(f"stream_channels: {c!r} is not a Twitch login (letters, digits, underscore)")
+        return out
 
     def cpm_for(self, platform: Platform) -> float:
         """Rate per 1,000 views on one platform (falls back to cpm_usd)."""
@@ -359,6 +438,29 @@ class CropPlan(BaseModel):
     shots: list[ShotCrop]
 
 
+class Rect(BaseModel):
+    """Pixel rectangle in the 1080x1920 frame: x0/y0 inclusive, x1/y1 exclusive."""
+
+    x0: int
+    y0: int
+    x1: int
+    y1: int
+
+    def intersects(self, other: Rect) -> bool:
+        return self.x0 < other.x1 and other.x0 < self.x1 and self.y0 < other.y1 and other.y0 < self.y1
+
+
+class OverlayManifest(BaseModel):
+    """The campaign overlay as rendered: placed image rect, its visible (non-transparent) part, and timing."""
+
+    image_sha256: str
+    rect: Rect
+    opaque_rect: Rect
+    start_s: float
+    end_s: float
+    full_duration: bool
+
+
 class RenderManifest(BaseModel):
     clip_path: str
     candidate_id: int
@@ -375,6 +477,9 @@ class RenderManifest(BaseModel):
     hook_end_s: float
     audio_source_only: bool = Field(description="True when only the source audio stream is mapped.")
     sha256: str
+    # Where the "Ad" label was drawn, and the campaign overlay if the campaign has one (invariant 3: never overlap).
+    ad_label_rect: Rect | None = None
+    overlay: OverlayManifest | None = None
 
 
 class QACheck(BaseModel):

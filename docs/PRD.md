@@ -79,6 +79,8 @@ of the month: monthly report incl. kill/scale rule status (day-60: <100k paid vi
 | F14 | Health: heartbeat file every minute; bot alert if the worker heartbeat is older than 10 min during 19:30–21:00. |
 | F15 | Per-platform economics: store `cpm_by_platform`, `min_payout_by_platform`, `unpaid_viewer_countries`, `participants` and `budget_total_usd` on a campaign; the QA gate rejects a post to a platform the campaign doesn't allow. |
 | F16 | Game and no-face footage: when `content_kind == "game"` or no face is detected, the crop planner defaults to the blurred-background fit; captions and the hook carry the clip. |
+| F18 | Campaign-specific behaviour is data, not code: a campaign JSON may add an overlay image shown on every clip (placed clear of the "Ad" label, captions, hook and platform UI), required caption text appended at the end of every caption, a copy style note for the hook/caption prompt, the Twitch channels its VODs may come from, and a cap on how many minutes of a stream are downloaded. Adding a campaign is one JSON file plus its assets in `campaigns/assets/<slug>/`. |
+| F19 | "New hook" never shows a hook the clip already had: every previous hook is sent to the copy model as an avoid-list, a repeat is retried once, and a second repeat keeps the current version. |
 | F17 | Sources may be a folder link (Google Drive or Dropbox): list the files, register each as a source of that campaign, hash each. No-speech guard: if a transcript has fewer than 20 words per minute, mark the source FAILED with reason `no_speech` and tell the operator instead of ranking it. |
 
 ## 6. Non-functional

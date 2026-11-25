@@ -52,7 +52,7 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
 
 | Table | Key columns |
 | --- | --- |
-| `campaigns` | id, platform_marketplace (`content_rewards`/`vyro`), name, url, submission_url, cpm_usd, min_payout_usd, per_clip_cap_usd, budget_remaining_usd, allowed_platforms (json), required_tags (json), disclosure_text, rules_notes, is_political, approval_rate_pct, status, created_at |
+| `campaigns` | id, platform_marketplace (`content_rewards`/`vyro`), name, url, submission_url, cpm_usd, min_payout_usd, per_clip_cap_usd, budget_remaining_usd, allowed_platforms (json), required_tags (json), disclosure_text, rules_notes, is_political, approval_rate_pct, overlay (json), copy_style_notes, stream_channels (json), max_source_minutes, status, created_at |
 | `sources` | id, campaign_id, url, sha256, local_path, duration_s, status, downloaded_at, purged_at |
 | `transcripts` | id, source_id, provider, model, words_json_path, language, cost_usd |
 | `candidates` | id, source_id, start_s, end_s, score, standalone, brief_ok, reasons, hook, title, captions_json, prompt_version, state |
@@ -69,9 +69,18 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
 ## 4. Modules
 
 ### 4.1 ingest
-- `registry.py`: add/list/update campaigns from `schemas.CampaignIn` JSON; `drain`/`end` commands.
+- `registry.py`: add/list/update campaigns from `schemas.CampaignIn` JSON; `drain`/`end` commands. Before saving,
+  `validate_campaign_setup` checks a campaign's overlay (file, RGBA, placement clear of captions/hook/platform UI, a
+  spot for the "Ad" label) and refuses URL-like required caption text on a campaign that lists X (invariant 9).
+- Optional, generic campaign fields (all campaign-specific behaviour lives in the campaign JSON, never in code):
+  `overlay` {path under `campaigns/assets/`, position {x_pct, y_pct}, scale, full_duration}; `required_tags` (the
+  JSON may call it `required_caption_tags`: text every caption ends with, hashtags or a link); `copy_style_notes`
+  (tone for the copy prompt); `stream_channels` (Twitch logins whose VODs/clips may be downloaded);
+  `max_source_minutes` (download only the first N minutes of a stream source).
 - `download.py`: only `sources` rows. Handlers by host: Google Drive (`gdown`), Dropbox (`?dl=1`), direct HTTP; Twitch VOD/clip
-  (`yt-dlp`) only when the source's campaign has `allow_stream_download=true`. Any other host, including YouTube and Kick, is
+  (`yt-dlp`) only when the source's campaign has `allow_stream_download=true`; with `stream_channels` the metadata is
+  read first and a video from another channel (or a VOD still live) is refused before any media is fetched; with
+  `max_source_minutes` only `[0, N min]` is downloaded (yt-dlp `download_ranges`). Any other host, including YouTube and Kick, is
   refused with an operator alert. Refuses any URL not registered (`compliance.assert_registered_source`). Stores SHA-256 and
   duration (ffprobe).
 - `inbox.py`: watches `inbox/<campaign_slug>/` for files Carson drops in by hand (footage the campaign supplied as a download he
@@ -116,9 +125,17 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
   per-word events); safe zone: captions centered at 62–70% height (clear of platform UI at the bottom ~20%).
 - `overlays.py`: hook text (top third) 0–2.5 s; "Ad" label top-left 0–3 s; style preset (font, size, colors, outline)
   from `config.styles[account_set]`. Fonts are OFL-licensed and bundled in `assets/fonts/`.
+- `campaign_overlay.py` (pure core): a campaign's overlay image (RGBA PNG). Scales it to `scale` × 1080 px, centres it
+  on `position`, finds its visible box (alpha > 16) and refuses any placement whose visible box meets the caption
+  band, the hook box, the frame edge or the platform UI zones (top 150 px, right 15 %, bottom 20 %). The "Ad" label
+  goes to the first fixed top spot clear of it (top-left, top-right, top-centre) or the render is refused. Nothing is
+  ever shrunk or moved to make it fit.
 - `encode.py`: one ffmpeg filtergraph per shot then concat, or a single graph with `trim`+`crop`+`concat`;
   `-c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k`, `loudnorm=I=-14:TP=-1.5:LRA=11`.
-  Writes `schemas.RenderManifest` (includes `has_ad_label`, `ad_label_end_s`, `style_preset`).
+  Writes `schemas.RenderManifest` (includes `has_ad_label`, `ad_label_end_s`, `style_preset`, `ad_label_rect` and the
+  campaign `overlay` with its rects and timing). A campaign overlay is input 1 (a single `.png` frame), scaled and
+  composited with `overlay=...:eof_action=repeat` after the shots are joined and before `ass`, so the label, hook and
+  captions are drawn on top of it.
 
 ### 4.5 qa
 `checks.py`: ffprobe + manifest → `schemas.QAReport` (pass/fail per check). Checks listed in PRD F6 plus

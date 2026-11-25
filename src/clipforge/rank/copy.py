@@ -99,6 +99,29 @@ def finalize_captions(copy: ClipCopy, campaign: CampaignIn) -> ClipCopy:
     return copy.model_copy(update={"captions": captions})
 
 
+def hook_key(hook: str) -> str:
+    """Comparison key for hooks: lowercase letters and digits only ("Nobody saw THAT coming!" == "nobody saw that
+    coming")."""
+    return "".join(ch for ch in hook.lower() if ch.isalnum())
+
+
+def repeats_hook(hook: str, used: Sequence[str]) -> bool:
+    key = hook_key(hook)
+    return any(key == hook_key(u) for u in used if hook_key(u))
+
+
+def render_avoid_hooks(hooks: Sequence[str]) -> str:
+    unique = list(dict.fromkeys(h.strip() for h in hooks if h.strip()))
+    return "\n".join(f"- {escape_text(h)}" for h in unique) or "(none)"
+
+
+class RepeatedHookError(RankError):
+    """The model kept returning a hook this clip already had ("New hook" must never show the same hook again)."""
+
+
+HOOK_ATTEMPTS = 2  # one retry when the model repeats a used hook
+
+
 def write_copy(
     candidate: Candidate,
     clip_text: str,
@@ -107,10 +130,15 @@ def write_copy(
     *,
     client: ClaudeClient,
     fewshots: Sequence[Fewshot] = (),
+    avoid_hooks: Sequence[str] = (),
     prompt: Prompt | None = None,
     model: str | None = None,
 ) -> ClipCopy:
-    """Hook, title and normalised captions for one candidate, for the platforms this campaign × account allows."""
+    """Hook, title and normalised captions for one candidate, for the platforms this campaign × account allows.
+
+    `avoid_hooks` ("New hook"): hooks this clip already had. They go into the prompt, and a reply that repeats one
+    (ignoring case and punctuation) is retried once with a reminder, then refused with RepeatedHookError.
+    """
     allowed = compliance.allowed_platforms(campaign, platforms)
     if not allowed:
         raise RankError(f"campaign {campaign.name!r} allows none of {[p.value for p in platforms]}")
@@ -118,21 +146,35 @@ def write_copy(
     user = prompt.render_user(
         campaign_brief=campaign_brief(campaign),
         fewshots=_render_fewshots(fewshots),
+        avoid_hooks=render_avoid_hooks(avoid_hooks),
         platforms=", ".join(p.value for p in allowed),
         start_s=f"{candidate.start_s:.1f}",
         end_s=f"{candidate.end_s:.1f}",
         duration_s=f"{candidate.end_s - candidate.start_s:.1f}",
         clip_text=escape_text(clip_text),
     )
-    result = client.json_output(
-        model=model or client.app.models.copy_,
-        system=prompt.system,
-        user=user,
-        schema=copy_schema(allowed),
-        max_tokens=MAX_TOKENS,
-        effort=COPY_EFFORT,
-    )
-    return finalize_captions(repair_copy(result.data, allowed), campaign)
+    attempts = HOOK_ATTEMPTS if avoid_hooks else 1
+    copy: ClipCopy | None = None
+    for attempt in range(attempts):
+        message = user
+        if attempt and copy is not None:
+            message += (
+                f"\n\nYour last hook, {escape_text(copy.hook)!r}, repeats a hook this clip already had. "
+                "Write a clearly different hook (and captions to match)."
+            )
+        result = client.json_output(
+            model=model or client.app.models.copy_,
+            system=prompt.system,
+            user=message,
+            schema=copy_schema(allowed),
+            max_tokens=MAX_TOKENS,
+            effort=COPY_EFFORT,
+        )
+        copy = repair_copy(result.data, allowed)
+        if not repeats_hook(copy.hook, avoid_hooks):
+            return finalize_captions(copy, campaign)
+        log.info("copy for candidate %s repeated a used hook (attempt %d)", candidate.id, attempt + 1)
+    raise RepeatedHookError(f"the model returned a hook this clip already had ({copy.hook if copy else ''!r})")
 
 
 @dataclass

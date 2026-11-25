@@ -124,6 +124,8 @@ def campaign_brief(campaign: CampaignIn) -> str:
     ]
     if campaign.required_tags:
         lines.append(f"Required tags (added automatically): {' '.join(campaign.required_tags)}")
+    if campaign.copy_style_notes.strip():
+        lines.append(f"Style for this campaign: {escape_text(campaign.copy_style_notes.strip())}")
     lines.append("Rules and brief notes:")
     lines.append(escape_text(campaign.rules_notes.strip()) or "(none given)")
     return "\n".join(lines)

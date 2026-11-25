@@ -293,7 +293,14 @@ def _fetch(
         # assert_registered_source already required allow_stream_download; check again at the point of action.
         if not campaign.allow_stream_download:
             raise ComplianceError(1, f"campaign {campaign.id} does not allow stream downloads")
-        got = twitch.download(source.url, out_dir, stem, ytdl_factory=ytdl_factory)
+        got = twitch.download(
+            source.url,
+            out_dir,
+            stem,
+            ytdl_factory=ytdl_factory,
+            channels=campaign.stream_channels,
+            max_minutes=campaign.max_source_minutes,
+        )
         return got, media.sha256_file(got)
     if host is SourceHost.INBOX:
         from clipforge.ingest import inbox

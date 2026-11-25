@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from clipforge.compliance import allowed_platforms, assert_registered_source, classify_source_host
+from clipforge.compliance import allowed_platforms, assert_registered_source, classify_source_host, contains_url
 from clipforge.schemas import Campaign, CampaignIn, CampaignStatus, Platform, SourceHost
 
 CAMPAIGNS = sorted((Path(__file__).resolve().parent.parent / "campaigns").glob("*.json"))
@@ -24,7 +24,8 @@ def test_campaign_file_validates(path: Path) -> None:
     assert {Platform.TIKTOK, Platform.INSTAGRAM} <= set(allowed_platforms(c))  # screening rule 3
     assert c.disclosure_text.lower().startswith("#ad")
     for tag in c.required_tags:
-        assert tag.startswith("#")
+        # A hashtag, or a link the brief requires (e.g. the streamer's channel); a link can never go on X (inv. 9).
+        assert tag.startswith("#") or (contains_url(tag) and Platform.X not in c.allowed_platforms), tag
     if c.min_views_per_post and c.min_payout_usd:
         # min_views_per_post is derived from min payout / CPM (rounded up).
         assert c.min_views_per_post >= c.min_payout_usd / c.cpm_usd * 1000 - 1

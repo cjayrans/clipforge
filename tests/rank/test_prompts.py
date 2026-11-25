@@ -53,7 +53,10 @@ def test_repo_prompts_load_with_versions():
     ("name", "variables"),
     [
         ("score_windows", {"campaign_brief", "fewshots", "n_windows", "windows"}),
-        ("clip_copy", {"campaign_brief", "fewshots", "platforms", "start_s", "end_s", "duration_s", "clip_text"}),
+        (
+            "clip_copy",
+            {"campaign_brief", "fewshots", "avoid_hooks", "platforms", "start_s", "end_s", "duration_s", "clip_text"},
+        ),
     ],
 )
 def test_repo_prompt_variables(name, variables):

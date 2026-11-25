@@ -4,9 +4,10 @@ ARCHITECTURE §4.4: a single filtergraph with `trim` + crop/fit_blur per shot, `
 "Ad" label), `fps`, `format=yuv420p`; `libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -r 30`,
 `aac -b:a 128k`, `loudnorm=I=-14:TP=-1.5:LRA=11`.
 
-Invariant 10: exactly one input (the source) and only its audio is mapped (`-map 0:a:0`, filtered with `-af`, never
-through a filtergraph label, never mixed). `maps_only_source_audio` checks the final argument list and its result is
-what the manifest records as `audio_source_only`.
+Invariant 10: input 0 is the source and only its audio is mapped (`-map 0:a:0`, filtered with `-af`, never
+through a filtergraph label, never mixed). The one other input allowed is a campaign overlay: a single still `.png`
+(input 1, video only, composited with `overlay` before `ass`). `maps_only_source_audio` checks the final argument
+list and its result is what the manifest records as `audio_source_only`.
 """
 
 from __future__ import annotations
@@ -27,17 +28,42 @@ OUT_W, OUT_H = compliance.RENDER_WIDTH, compliance.RENDER_HEIGHT
 BLUR_W, BLUR_H = 270, 480  # background is blurred at quarter size, then scaled up (cheap on CPU)
 FFMPEG_TIMEOUT_S = 1800
 _UNSAFE_FILTER_CHARS = set(":\\',;[]=\n")
-_FORBIDDEN_FLAGS = frozenset({"-filter_complex_script", "-filter_script", "-stream_loop", "-lavfi_script"})
+_FORBIDDEN_FLAGS = frozenset(
+    {"-filter_complex_script", "-filter_script", "-stream_loop", "-lavfi_script", "-loop", "-f"}
+)
+# The overlay input must be a plain local PNG path: no protocol ("concat:", "http://"), no device, no lavfi.
+_PNG_INPUT_RE = re.compile(r"^(?![A-Za-z][A-Za-z0-9+.-]*:)[^\n|]+\.png$", re.IGNORECASE)
 _FILTER_FLAGS = frozenset({"-filter_complex", "-lavfi", "-vf", "-filter:v", "-af", "-filter:a"})
 # Audio pads ([0:a], [1:a:0]) or filters that read files or generate/mix audio.
 # File-path option values (ass/subtitles filename, fontsdir) are removed before scanning so a folder name like
 # "movie-night" cannot trip the check; paths never carry audio into the output.
 _PATH_OPTION_RE = re.compile(r"\b(?:filename|fontsdir)=[^:,;\[\]]*")
 _AUDIO_FILTER_RE = re.compile(r"\[\d+:a|\b(?:a?movie|amix|amerge|join|anullsrc|sine|aevalsrc|asplit|anoisesrc)\b")
+# Any filtergraph pad that names an input stream ([0:v], [1], [1:1], [0:a:0] ...). Only [0:v] and, with an overlay,
+# [1:v] are allowed: an unlabeled or numbered pad could pull audio from an input.
+# ffmpeg trims spaces in labels and reads the input number like strtol (hex/octal too), so any label that starts
+# with a digit after optional spaces names an input; it must then be exactly "0:v" (or "1:v" with an overlay).
+_INPUT_PAD_RE = re.compile(r"\[\s*(\d[^\]]*)\]")
+# Input options that block every non-video stream of the overlay file (ffmpeg: as input options, -an/-sn/-dn block
+# those streams from being filtered or mapped).
+OVERLAY_INPUT_FLAGS = ("-an", "-sn", "-dn")
 
 
 class RenderError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class OverlayInput:
+    """A campaign overlay image composited over the clip (input 1). Sizes/positions in output pixels."""
+
+    path: Path | str
+    width: int
+    height: int
+    x: int
+    y: int
+    start_s: float = 0.0  # clip seconds
+    end_s: float | None = None  # None = to the end of the clip
 
 
 @dataclass(frozen=True)
@@ -93,8 +119,14 @@ def build_filtergraph(
     ass_path: Path | str | None,
     fonts_dir: Path | str | None,
     fps: int = 30,
+    overlay: OverlayInput | None = None,
 ) -> str:
-    """Filtergraph for input 0 (already seeked to clip_start_s). Shot times are source seconds."""
+    """Filtergraph for input 0 (already seeked to clip_start_s). Shot times are source seconds.
+
+    With `overlay`, input 1 (a still PNG) is scaled and composited after the shots are joined and before `ass`, so the
+    "Ad" label, hook and captions are always drawn on top of it. `eof_action=repeat` keeps the single image frame on
+    screen for the whole clip.
+    """
     if not plan.shots:
         raise RenderError("crop plan has no shots")
     n = len(plan.shots)
@@ -109,6 +141,13 @@ def build_filtergraph(
         parts.append(_shot_filter(crop, f"s{i}", f"v{i}", start, end, i))
     joined = "".join(f"[v{i}]" for i in range(n))
     tail = f"{joined}concat=n={n}:v=1:a=0" if n > 1 else "[v0]null"
+    if overlay is not None:
+        parts.append(tail + "[base]")
+        parts.append(f"[1:v]scale={overlay.width}:{overlay.height},format=rgba[ovl]")
+        tail = f"[base][ovl]overlay=x={overlay.x}:y={overlay.y}:eof_action=repeat"
+        if overlay.start_s > 0 or overlay.end_s is not None:
+            end = duration_s if overlay.end_s is None else overlay.end_s
+            tail += f":enable='between(t,{overlay.start_s:.3f},{end:.3f})'"
     if ass_path is not None:
         tail += f",ass=filename={filter_path(ass_path)}"
         if fonts_dir is not None:
@@ -134,6 +173,7 @@ def build_ffmpeg_args(
     fonts_dir: Path | str | None = None,
     settings: EncodeSettings | None = None,
     ffmpeg: str = "ffmpeg",
+    overlay: OverlayInput | None = None,
 ) -> list[str]:
     """Full ffmpeg argument list producing `manifest.clip_path` from `source_path`.
 
@@ -146,11 +186,13 @@ def build_ffmpeg_args(
     if (manifest.width, manifest.height) != (OUT_W, OUT_H):
         raise RenderError(f"output must be {OUT_W}x{OUT_H}")
     plan = crop_plan or default_plan(duration, clip_start_s)
-    graph = build_filtergraph(plan, clip_start_s, duration, ass_path, fonts_dir, s.fps)
+    graph = build_filtergraph(plan, clip_start_s, duration, ass_path, fonts_dir, s.fps, overlay)
     loudnorm = f"loudnorm=I={s.loudnorm_i:g}:TP={s.loudnorm_tp:g}:LRA={s.loudnorm_lra:g}"
+    overlay_input = [*OVERLAY_INPUT_FLAGS, "-i", str(overlay.path)] if overlay is not None else []
     return [
         ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
         "-ss", f"{clip_start_s:.3f}", "-t", f"{duration:.3f}", "-i", str(source_path),
+        *overlay_input,
         "-filter_complex", graph,
         "-map", "[v]", "-map", "0:a:0",
         "-c:v", "libx264", "-preset", s.preset, "-crf", str(s.crf), "-pix_fmt", "yuv420p", "-r", str(s.fps),
@@ -164,20 +206,37 @@ def build_ffmpeg_args(
 def maps_only_source_audio(args: Sequence[str]) -> bool:
     """Invariant 10: the only audio that can reach the output is input 0's own audio track.
 
-    True only when: exactly one `-i`; at least one audio map and every audio map starts with `0:a`; every other map
-    is the `[v]` video label or `0:v…`; no filter (`-filter_complex`/`-lavfi`/`-vf`/`-af`) reads an audio pad or
-    generates/mixes audio; no filter scripts or input looping (which could hide either).
+    True only when: one `-i` (the source), or two where the second is a plain local `.png` still (a campaign
+    overlay) opened with `-an -sn -dn`; filtergraph input pads are only `[0:v]` (and `[1:v]` with an overlay); at
+    least one audio map and every audio map starts with `0:a`; every other map is
+    the `[v]` video label or `0:v…`; no filter (`-filter_complex`/`-lavfi`/`-vf`/`-af`) reads an audio pad or
+    generates/mixes audio; no filter scripts, input looping or forced input format (which could hide either).
     """
     if any(a in _FORBIDDEN_FLAGS for a in args):
         return False
-    if sum(1 for a in args if a == "-i") != 1:
+    inputs = [args[i + 1] for i, a in enumerate(args[:-1]) if a == "-i"]
+    if args and args[-1] == "-i":
         return False
+    if not 1 <= len(inputs) <= 2:
+        return False
+    if len(inputs) == 2:
+        if not _PNG_INPUT_RE.match(inputs[1]):
+            return False
+        second = [i for i, a in enumerate(args) if a == "-i"][1]
+        if tuple(args[second - len(OVERLAY_INPUT_FLAGS) : second]) != OVERLAY_INPUT_FLAGS:
+            return False  # the overlay must be opened with its audio/subtitle/data streams blocked
     maps = [args[i + 1] for i, a in enumerate(args[:-1]) if a == "-map"]
     audio_maps = [m for m in maps if m.startswith("0:a")]
     if not audio_maps or any(m not in ("[v]",) and not m.startswith(("0:a", "0:v")) for m in maps):
         return False
-    filters = [args[i + 1] for i, a in enumerate(args[:-1]) if a in _FILTER_FLAGS]
-    return not any(_AUDIO_FILTER_RE.search(_PATH_OPTION_RE.sub("", f)) for f in filters)
+    filters = [_PATH_OPTION_RE.sub("", args[i + 1]) for i, a in enumerate(args[:-1]) if a in _FILTER_FLAGS]
+    allowed_pads = {"0:v", "1:v"} if len(inputs) == 2 else {"0:v"}
+    for f in filters:
+        if _AUDIO_FILTER_RE.search(f):
+            return False
+        if any(m.group(1).strip() not in allowed_pads for m in _INPUT_PAD_RE.finditer(f)):
+            return False
+    return True
 
 
 def sha256_file(path: Path | str) -> str:

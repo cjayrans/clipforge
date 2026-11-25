@@ -309,6 +309,7 @@ def _render_and_qa(
         content_kind=inputs.campaign.content_kind,
         account_set=inputs.account_set,
         out_dir=out_dir,
+        overlay=inputs.campaign.overlay,
     )
     try:
         manifest = render_candidate(req, settings.app, **deps.render_kwargs)
@@ -744,6 +745,7 @@ class RerenderJob:
     hook: str
     old_path: str
     clip_text: str
+    used_hooks: tuple[str, ...] = ()  # every hook this clip has had, current one included ("New hook" avoids them)
 
 
 def begin_rerender(
@@ -818,6 +820,7 @@ def begin_rerender(
             hook=cand.hook or "",
             old_path=clip.path,
             clip_text=text_between(transcript.words, cand.start_s, cand.end_s),
+            used_hooks=tuple(h for h in [*(cand.hook_history or []), cand.hook or ""] if h),
         )
 
 
@@ -834,7 +837,12 @@ def finish_rerender(
         if job.kind == "new_hook":
             client = _build_claude(settings, factory, deps)
             copy = write_copy(
-                job.candidate, job.clip_text, job.inputs.campaign, job.inputs.account.platforms, client=client
+                job.candidate,
+                job.clip_text,
+                job.inputs.campaign,
+                job.inputs.account.platforms,
+                client=client,
+                avoid_hooks=job.used_hooks,
             )
             hook, title = copy.hook, copy.youtube_title
             captions = {c.platform: c.text for c in copy.captions}
@@ -868,6 +876,8 @@ def finish_rerender(
         clip.rendered_at = fresh_render_time(s, clip.id, now)  # earlier approvals are now stale (COMPLIANCE #5)
         if job.kind == "new_hook":
             old_hook = cand.hook
+            if old_hook:
+                cand.hook_history = [*(cand.hook_history or []), old_hook]  # new list: JSON columns track assignment
             cand.hook = hook
             cand.title = title
             cand.captions_json = {p.value: t for p, t in captions.items()}
