@@ -113,7 +113,7 @@ Older JSON and rows load unchanged. `Window` (20–75 s) is untouched: moment wi
 
 ## Verification
 
-- `make lint`, `mypy --strict` on schemas/compliance, and the full suite pass locally (1341 passed, 13 skipped). New
+- `make lint`, `mypy --strict` on schemas/compliance, and the full suite pass locally (1350 passed, 14 skipped, after rebasing on main). New
   tests cover the profile, signals, generation and gates, the ranker (strict schema, parsing, gates, window rules,
   end to end with the mocked Anthropic API), the ffmpeg passes, the pipeline wiring, migration 0003, the report and
   the preview.
