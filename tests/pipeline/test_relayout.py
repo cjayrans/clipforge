@@ -118,6 +118,9 @@ def test_facecam_is_detected_once_per_source(
         assert relayout_one(pipe_settings, db, cid, deps).ok
     assert len(render.facecam_calls) == calls_after_nightly + 1
     with session_scope(db) as s:
+        windows = sorted((c.start_s, c.end_s) for c in s.scalars(select(CandidateRow)))
+    assert sorted(render.facecam_windows[-1]) == windows  # detection samples inside the source's clip windows
+    with session_scope(db) as s:
         src = s.scalars(select(SourceRow)).one()
         assert src.facecam_json is not None
         assert src.facecam_json["status"] == "found"

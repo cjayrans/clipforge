@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from clipforge.db import CampaignRow, SourceRow, record_event
+from clipforge.db import CampaignRow, CandidateRow, SourceRow, record_event
 from clipforge.db.transitions import Actor
 from clipforge.ingest.alerts import redact_urls
 from clipforge.render.facecam import DETECTOR_VERSION, FacecamDetection
@@ -97,3 +98,11 @@ def store_facecam(
         actor=actor,
         detail=f"{detection.summary()}{took}",
     )
+
+
+def clip_windows(session: Session, source_id: int) -> list[tuple[float, float]]:
+    """(start_s, end_s) of every candidate of a source, any state: where facecam detection samples frames."""
+    rows = session.execute(
+        select(CandidateRow.start_s, CandidateRow.end_s).where(CandidateRow.source_id == source_id)
+    ).all()
+    return [(float(a), float(b)) for a, b in rows if b > a]

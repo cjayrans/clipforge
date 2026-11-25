@@ -143,12 +143,18 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
   when its prerequisites fail (stacked: a face in the facecam box in ≥ 60 % of the clip's sampled frames; crop: the
   source is wider than 9:16) or when `campaign_overlay.place_texts` cannot place hook, label, captions and overlay
   clear of each other, the platform UI and the face; the reasons go to `manifest.layout_reason`.
-- `facecam.py`: once per source, 40 frames sampled over the source (first/last 5 % skipped), MediaPipe on
-  overlapping tiles (BlazeFace short-range sees 128×128, so a small facecam face needs tiling), NMS; pure core
-  `pick_facecam` clusters face centres across frames (in-game faces move, the facecam does not), median face box,
-  padded to the panel aspect (2.4 × face height, face 45 % down). Stored on `sources.facecam_json` ("none" too).
-  A campaign `facecam_box` (percent of the frame) skips detection. Per clip, `face_presence` checks the box really
-  shows a face over the clip window. `cf source facecam <id> --debug-image` draws what was found.
+- `facecam.py` (detector v2): once per source, 40 frames sampled **inside the source's clip windows** (its
+  candidates; the whole source only when it has none). Each frame is classified: **full-screen camera** when a face is
+  ≥ 25 % of the frame height (whole frame and frame-height tiles), else **gameplay**; only gameplay frames count (≥ 8
+  needed). Small faces come from overlapping tiles (BlazeFace short-range sees 128×128, so a small facecam face needs
+  tiling), NMS; pure core `pick_facecam` clusters face centres over gameplay frames (in-game faces move, the facecam
+  does not). The cluster must be in ≥ 60 % of gameplay frames and its face region must **change over time**
+  (`face_variation` ≥ 6 grey levels: a picture or poster on the wall does not), then median face box, padded to the
+  panel aspect (2.4 × face height, face 45 % down). Stored on `sources.facecam_json` with the counts and the reason
+  ("none" too; v1 results are ignored and re-detected). A campaign `facecam_box` (percent of the frame) skips
+  detection. Per clip, `face_presence` decides from the clip's own frames: a varying face in the facecam box in
+  ≥ 60 % of crops and at most half the clip's whole frames full-screen camera, else no stacked.
+  `cf source facecam <id> [--redetect] [--no-store] --debug-image` draws what was found.
 - `saliency.py` + `crop_path.py` (pure): AutoFlip-style gameplay camera. One ffmpeg pass per clip (4 fps, 192 px
   grey) → per-sample column profile of the hottest frame-difference pixels (facecam masked). Per shot: stationary
   centre by default; stationary at the median when concentrated motion holds still off-centre; tracking only when

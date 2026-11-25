@@ -77,7 +77,7 @@ from clipforge.db.migrate import upgrade
 from clipforge.ingest import media
 from clipforge.ingest.download import DownloadError, GDriveClient, download_source
 from clipforge.ingest.inbox import scan_inbox
-from clipforge.ingest.models import facecam_from_row, set_source_status, store_facecam
+from clipforge.ingest.models import clip_windows, facecam_from_row, set_source_status, store_facecam
 from clipforge.publish.dispatcher import expire_campaign_clips, release_clip
 from clipforge.publish.queries import campaign_model, lineage
 from clipforge.qa.checks import FaceCheckFn, default_face_check, qa_clip
@@ -156,7 +156,8 @@ class PipelineDeps:
     preview_fn: Callable[[Path], Path] = preview_for_telegram
     clock: Callable[[], datetime] = utcnow
     moment_signals: MomentSignalsFn | None = None  # None: ffmpeg loudness + motion passes (rank/media_signals.py)
-    facecam_fn: Callable[[Path], FacecamDetection | None] = default_detect  # once per source (render/facecam.py)
+    # once per source, sampled inside its clip windows (render/facecam.py)
+    facecam_fn: Callable[[Path, list[tuple[float, float]]], FacecamDetection | None] = default_detect
     qa_face_check: FaceCheckFn = default_face_check  # stacked clips: a face in the rendered facecam panel
 
 
@@ -369,7 +370,8 @@ def resolve_facecam(
     """The facecam a game clip of this source is laid out with, or None (crop/fit only).
 
     Order: the campaign's manual `facecam_box`; the detection stored on the source (current detector version); a new
-    detection (no transaction held while it runs), stored with an events row whatever it finds. A detection that
+    detection sampled inside the source's clip windows (no transaction held while it runs), stored with an events row
+    whatever it finds. A detection that
     could not run (no mediapipe, unreadable media) is not stored and is tried again next time."""
     if campaign.content_kind != "game" or campaign.layout in ("crop", "fit"):
         return None
@@ -381,9 +383,10 @@ def resolve_facecam(
             return None
         stored = facecam_from_row(src)
         path = Path(src.local_path)
+        windows = clip_windows(s, source_id)
     if stored is None:
         started = time.monotonic()
-        detection = deps.facecam_fn(path)
+        detection = deps.facecam_fn(path, windows)
         if detection is None:
             return None
         with session_scope(factory) as s:

@@ -34,6 +34,7 @@ from clipforge.ingest.folders import FolderListError, list_gdrive_folder
 from clipforge.ingest.models import (
     campaign_from_row,
     campaign_row_values,
+    clip_windows,
     facecam_from_row,
     set_source_status,
     store_facecam,
@@ -539,17 +540,20 @@ def source_facecam(
     source_id: int,
     *,
     redetect: bool = False,
+    store: bool = True,
     debug_image: Path | None = None,
-    detect_fn: Callable[[Path], FacecamDetection | None] | None = None,
+    detect_fn: Callable[[Path, list[tuple[float, float]]], FacecamDetection | None] | None = None,
     grab: Callable[[Path, float, int, int], Any] | None = None,
     probe_fn: Callable[[Path], Any] | None = None,
 ) -> FacecamDetection | None:
     """`cf source facecam <id>`: the facecam box used for a source's stacked layout.
 
-    Shows the stored detection (or runs and stores one: `--redetect`, or none stored yet). A campaign's manual
-    `facecam_box` wins over detection and is shown instead. `--debug-image PATH` writes a sample frame (middle of the
-    source) with the face (green), facecam (red) and centre gameplay window (blue) drawn, plus `<stem>_stacked.jpg`,
-    a half-size mock of the stacked layout, so the box can be checked by eye before any re-render."""
+    Shows the stored detection (current detector version), or runs one sampled inside the source's clip windows
+    (`--redetect`, or none stored yet) and stores it; `--no-store` only shows it. A campaign's manual `facecam_box`
+    wins over detection and is shown instead. `--debug-image PATH` writes the detector's representative sample (a
+    frame where the facecam face was found, else a gameplay frame) with the face (green), facecam (red) and centre
+    gameplay window (blue) drawn, plus `<stem>_stacked.jpg`, a half-size mock of the stacked layout, so the box can be
+    checked by eye before any re-render. The images are frames of licensed footage: keep them local, delete after."""
     from clipforge.qa.probe import probe
     from clipforge.render.facecam import default_detect, draw_debug, draw_debug_stacked, grab_frame, pct_to_px
 
@@ -563,10 +567,15 @@ def source_facecam(
     src = (probe_fn or probe)(path)
     detection = None if redetect else facecam_from_row(source)
     if detection is None and campaign.facecam_box is None:
-        detection = (detect_fn or default_detect)(path)
+        windows = clip_windows(session, source.id)
+        detection = (detect_fn or default_detect)(path, windows)
         if detection is None:
             raise RegistryError("facecam detection could not run (mediapipe missing or the media is unreadable)")
-        store_facecam(session, source, detection, actor="operator")
+        console.print(f"source {source.id}: sampled inside {len(windows)} clip window(s)")
+        if store:
+            store_facecam(session, source, detection, actor="operator")
+        else:
+            console.print("--no-store: result not saved")
     box = None
     if campaign.facecam_box is not None:
         box = pct_to_px(campaign.facecam_box, src.width, src.height)
@@ -581,11 +590,12 @@ def source_facecam(
             f = detection.face
             console.print(f"  median face x {f.x}, y {f.y}, {f.w}x{f.h} px")
     if debug_image is not None:
-        rgb = (grab or grab_frame)(path, round(src.duration_s / 2, 3), src.width, src.height)
+        t = detection.debug_t if detection is not None and detection.debug_t is not None else src.duration_s / 2
+        rgb = (grab or grab_frame)(path, round(t, 3), src.width, src.height)
         if rgb is None:
             raise RegistryError("could not read a frame for the debug image")
         draw_debug(rgb, detection, box, debug_image)
-        console.print(f"debug image: {debug_image}")
+        console.print(f"debug image: {debug_image} (t = {t:.1f}s)")
         if box is not None:
             stacked = debug_image.with_name(f"{debug_image.stem}_stacked.jpg")
             draw_debug_stacked(rgb, box, stacked)

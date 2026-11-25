@@ -302,3 +302,28 @@ def test_real_render_stacked_and_tracking(tmp_path: Path, app_config: AppConfig,
         assert (out.width, out.height) == (1080, 1920)
         assert out.audio_streams == 1
         assert out.duration_s == pytest.approx(12.0, abs=0.15)
+
+
+# --- per-clip decision from the clip's own frames (facecam detection v2) ---------------------------------------
+
+
+def test_stacked_is_skipped_for_a_full_screen_camera_clip(tmp_path: Path, app_config: AppConfig) -> None:
+    fakes = Fakes()
+    fakes.presence = Presence(ratio=0.9, samples=60, face=FACE_IN_CROP, variation=20.0, fullcam_ratio=0.75)
+    m = fakes.render(stacked_request(tmp_path), app_config)
+    assert m.layout == "crop"
+    assert "stacked: the clip is a full-screen camera shot in 75% of its frames" in m.layout_reason
+
+
+def test_stacked_is_skipped_when_the_facecam_face_is_static(tmp_path: Path, app_config: AppConfig) -> None:
+    fakes = Fakes()
+    fakes.presence = Presence(ratio=1.0, samples=60, face=FACE_IN_CROP, variation=1.2, fullcam_ratio=0.0)
+    m = fakes.render(stacked_request(tmp_path), app_config)
+    assert m.layout == "crop"
+    assert "never changes (variation 1.2): a picture, not a person" in m.layout_reason
+
+
+def test_stacked_with_a_live_face_in_gameplay(tmp_path: Path, app_config: AppConfig) -> None:
+    fakes = Fakes()
+    fakes.presence = Presence(ratio=0.9, samples=60, face=FACE_IN_CROP, variation=18.0, fullcam_ratio=0.1)
+    assert fakes.render(stacked_request(tmp_path), app_config).layout == "stacked"
