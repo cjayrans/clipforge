@@ -17,3 +17,6 @@ __pycache__/
 *.wav
 !tests/fixtures/*.mp4
 .DS_Store
+
+# Campaign-supplied assets (overlays etc.): licensed per campaign, never committed
+campaigns/assets/

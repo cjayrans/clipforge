@@ -13,6 +13,8 @@ x-app: &app
     - ./data:/app/data
     - ./config:/app/config:ro
     - ./inbox:/app/inbox
+    # Campaign files and their git-ignored assets (overlay images), read-only: render reads overlays from here.
+    - ./campaigns:/app/campaigns:ro
   restart: unless-stopped
   cpus: 6
 

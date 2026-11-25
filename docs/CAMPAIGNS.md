@@ -23,6 +23,7 @@ join, so none of the rules below have been read yet.
 | AsianJeff (Reach) | $1.00 on all four | $10 (10,000 views) / $300 | $722 / $2,500 | 12 | His GTA 6 Twitch playthrough | Second |
 | Lucky Latvian x GTA6 (KLIPZY) | $2.00 on TikTok, Instagram, X, YouTube | $10 (5,000 views) / $100 | $426 / $1,000 in 2 days | 63 | Stream moments, CTA required, EU focus | Budget likely gone |
 | Dasgasd3m x RUCKUS | $2.00, TikTok and YouTube Shorts only | $20 (10,000 views) / $150 | $94 / $1,000 | 49 | GTA 6-specific accounts required | Skip (no Instagram, needs dedicated accounts) |
+| Boeshi GTA 6 Clipping (ClipLaunch), added 24 Nov | $1.00 on TikTok, Instagram | not read / $300 | $132 / $1,750 (8% paid, 24 Nov) | not read | Boeshi's recent Twitch VODs (twitch.tv/darealboeshi); overlay on the whole clip; caption includes twitch.tv/darealboeshi | Active (`campaigns/boeshi-gta6.json`) |
 | DiegoLoveless (ClipLaunch) | $1.00 on TikTok, Instagram, YouTube | $2 / not read | $926 / $1,400 | 126 | Must feature Diego plus a CTA to his Twitch | Crowded |
 
 Dylan Page's footage is a YouTube marathon: under the rules above, only use it if the campaign supplies files or links
@@ -43,6 +44,32 @@ you may download, or the rules explicitly permit it, otherwise skip the campaign
 9. Not gambling-sponsored, political or regulated.
 
 `cf campaign check <id>` applies the thresholds in `config/clipforge.yaml` (`campaign_filter`).
+
+## Adding a campaign (no code changes)
+
+Everything campaign-specific is data. A new campaign is one JSON file plus its assets:
+
+1. Write `campaigns/<slug>.json` against `schemas.CampaignIn` (copy an existing file). Generic optional fields:
+   - `required_caption_tags` (or `required_tags`): text every caption ends with, after `#ad` and the copy, e.g.
+     `["#Tag"]` or a channel link like `["twitch.tv/<channel>"]`. A link cannot be combined with `x` in
+     `allowed_platforms` (X captions carry no URLs); `cf campaign add` refuses it.
+   - `copy_style_notes`: the tone the brief asks for (e.g. humor/meme); fed to the hook/caption prompt.
+   - `overlay`: `{"path": "campaigns/assets/<slug>/<file>.png", "position": {"x_pct": 50, "y_pct": 31.5},
+     "scale": 0.6, "full_duration": true}`. The PNG needs an alpha channel. `cf campaign add` prints where its
+     visible part lands and refuses a placement that would cover the captions, the hook, the platform UI (top
+     150 px, right 15 %, bottom 20 %) or leave no spot for the "Ad" label. Fix the numbers in the JSON; the code never
+     moves or shrinks it.
+   - `allow_stream_download` (only when the rules say so), `stream_channels` (Twitch logins the footage may come
+     from; a VOD is matched on its channel login, a clip on the channel's display name lowercased, so a clip from a
+     channel whose display name differs from its login is refused: the safe direction), `max_source_minutes` (download only the first N minutes), `source_urls`.
+   - Unknown numbers: `null` for `min_payout_usd`/`min_views_per_post` (stored as 0) and the optional ones; say what was
+     not read in `rules_notes`.
+2. Put its assets in `campaigns/assets/<slug>/` (git-ignored: licensed to the operator for that campaign only; the
+   compose file mounts `campaigns/` read-only into the containers).
+3. `uv run cf campaign add --from-json campaigns/<slug>.json`, then `cf campaign check <id>`.
+
+Rules a brief states that the code cannot enforce (account audience, engagement rate, how long a post stays live,
+limits on near-identical clips) go in `rules_notes` and are the operator's to keep.
 
 ## Sources
 

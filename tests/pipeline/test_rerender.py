@@ -229,3 +229,64 @@ def test_clip_with_posts_cannot_be_re_rendered(
         Factory(s).post(clip)
     with pytest.raises(RerenderRefused, match="already has posts"):
         begin_rerender(pipe_settings, db, reviewed, "new_hook", APPROVE_AT)
+
+
+def test_new_hook_avoids_every_previous_hook(
+    pipe_settings: Settings,
+    db: sessionmaker[Session],
+    deps: PipelineDeps,
+    anthropic: FakeAnthropic,
+    reviewed: int,
+) -> None:
+    """The prompt carries every hook the clip has had; the history grows with each New hook."""
+    with session_scope(db) as s:
+        first = s.get(CandidateRow, _clip(db, reviewed).candidate_id)
+        assert first is not None
+        assert first.hook
+        original = first.hook
+    anthropic.default = fake_anthropic(["Second angle on the jump", "Third angle entirely"]).default
+    seen: list[str] = []
+    real = anthropic.default
+
+    def spy(body: dict[str, object]) -> object:
+        if not body.get("tools"):
+            seen.append(str(body["messages"][0]["content"]))  # type: ignore[index]
+        return real(body)
+
+    anthropic.default = spy  # type: ignore[assignment]
+    _rerender(pipe_settings, db, deps, reviewed, "new_hook")
+    _rerender(pipe_settings, db, deps, reviewed, "new_hook")
+    assert f"- {original}\n</used_hooks>" in seen[0]
+    assert f"- {original}\n- Second angle on the jump\n</used_hooks>" in seen[1]
+    with session_scope(db) as s:
+        cand = s.get(CandidateRow, _clip(db, reviewed).candidate_id)
+        assert cand is not None
+        assert cand.hook == "Third angle entirely"
+        assert cand.hook_history == [original, "Second angle on the jump"]
+
+
+def test_new_hook_that_keeps_repeating_is_not_rendered(
+    pipe_settings: Settings,
+    db: sessionmaker[Session],
+    deps: PipelineDeps,
+    anthropic: FakeAnthropic,
+    reviewed: int,
+) -> None:
+    before = _clip(db, reviewed)
+    with session_scope(db) as s:
+        cand = s.get(CandidateRow, before.candidate_id)
+        assert cand is not None
+        assert cand.hook
+        same = cand.hook
+    anthropic.default = fake_anthropic([same.upper(), same + "!"]).default  # same hook, case/punctuation changed
+    message = _rerender(pipe_settings, db, deps, reviewed, "new_hook")
+    assert "new hook failed" in message
+    assert "RepeatedHookError" in message
+    after = _clip(db, reviewed)
+    assert after.path == before.path  # nothing re-rendered; the old version is back for review
+    assert after.state is ClipState.PENDING_REVIEW
+    with session_scope(db) as s:
+        cand = s.get(CandidateRow, after.candidate_id)
+        assert cand is not None
+        assert cand.hook == same
+        assert cand.hook_history == []

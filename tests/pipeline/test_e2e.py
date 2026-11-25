@@ -106,7 +106,7 @@ async def _full_flow(
             assert c.captions_json is not None
             assert set(c.captions_json) == {"tiktok", "instagram"}  # stored as {platform: text} (ops CR 3)
             assert all(t.startswith("#ad ") and "#GTA6" in t for t in c.captions_json.values())
-            assert c.prompt_version == "score_windows@1+clip_copy@1"
+            assert c.prompt_version == "score_windows@1+clip_copy@2"
         clips = s.scalars(select(ClipRow).order_by(ClipRow.id)).all()
         assert len(clips) == report.ready
         assert all(c.state is ClipState.PENDING_REVIEW for c in clips)

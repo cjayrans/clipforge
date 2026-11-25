@@ -22,6 +22,12 @@ REPO = Path(__file__).resolve().parents[2]
 CAMPAIGN_FILES = sorted((REPO / "campaigns").glob("*.json"))
 
 
+def _overlay_asset_missing(path: Path) -> bool:
+    """Campaign overlays live in git-ignored campaigns/assets/, so CI has the JSON but not the image."""
+    overlay = json.loads(path.read_text(encoding="utf-8")).get("overlay")
+    return bool(overlay) and not (REPO / overlay["path"]).is_file()
+
+
 def _write(tmp_path: Path, data: dict[str, Any], name: str = "c.json") -> Path:
     p = tmp_path / name
     p.write_text(json.dumps(data), encoding="utf-8")
@@ -42,13 +48,21 @@ def _alerts(session: Session) -> list[EventRow]:
 
 @pytest.mark.parametrize("path", CAMPAIGN_FILES, ids=lambda p: p.name)
 def test_repo_campaign_files_register(session: Session, settings: Settings, path: Path) -> None:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if _overlay_asset_missing(path):
+        # Without its (git-ignored) overlay image a campaign is refused, never registered half-configured.
+        with pytest.raises(RegistryError, match="not found"):
+            registry.add_campaign_from_json(session, settings, path)
+        assert session.scalars(select(CampaignRow)).all() == []
+        return
     row = registry.add_campaign_from_json(session, settings, path)
     assert row.id is not None
     assert row.status is CampaignStatus.ACTIVE
     # Round-trip back to the contract model.
     c = campaign_from_row(row)
     assert c.name == row.name
-    assert c.allow_stream_download is False
+    # Stream downloads only where the campaign file explicitly allows them (set from the rules, never assumed).
+    assert c.allow_stream_download is (raw.get("allow_stream_download") is True)
 
 
 def test_add_is_upsert_by_slug(session: Session, settings: Settings, tmp_path: Path) -> None:
@@ -206,6 +220,8 @@ def test_views_to_min_payout() -> None:
 
 def test_check_campaign_on_repo_files(session: Session, settings: Settings) -> None:
     for path in CAMPAIGN_FILES:
+        if _overlay_asset_missing(path):
+            continue
         row = registry.add_campaign_from_json(session, settings, path)
         checks = registry.check_campaign(session, settings, row.id)
         by_name = {c.name: c.passed for c in checks}

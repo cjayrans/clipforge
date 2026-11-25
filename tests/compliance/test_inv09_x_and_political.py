@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from sqlalchemy.orm import Session
 
 from clipforge.compliance import (
     ComplianceError,
@@ -11,7 +14,7 @@ from clipforge.compliance import (
     contains_url,
     normalize_caption,
 )
-from clipforge.config import AppConfig
+from clipforge.config import AppConfig, Settings
 from clipforge.schemas import Platform, PublishMode, PublishRequest
 from tests.compliance._helpers import campaign
 
@@ -76,3 +79,26 @@ def test_upload_payload_x_caption_has_no_urls(app_config: AppConfig) -> None:
     )
     payload = build_payload(req, campaign(), app_config)
     assert not any(contains_url(str(v)) for k, v in payload.items() if "title" in k or "description" in k)
+
+
+def test_url_caption_text_refused_with_x(session: Session, settings: Settings, tmp_path: Path) -> None:
+    """A campaign whose required caption text is a link cannot list X: refused at `cf campaign add`, nothing saved."""
+    import json
+
+    from sqlalchemy import select
+
+    from clipforge.db import CampaignRow
+    from clipforge.ingest import registry
+    from clipforge.ingest.registry import RegistryError
+    from tests.support.factories import campaign_in
+
+    data = campaign_in(
+        name="Fake Streamer Clips",
+        allowed_platforms=["tiktok", "instagram", "x"],
+        required_caption_tags=["twitch.tv/fake"],
+    ).model_dump(mode="json")
+    path = tmp_path / "fake.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(RegistryError, match="invariant 9"):
+        registry.add_campaign_from_json(session, settings, path)
+    assert session.scalars(select(CampaignRow)).all() == []

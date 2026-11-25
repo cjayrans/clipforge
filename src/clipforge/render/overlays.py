@@ -1,7 +1,8 @@
 """Hook text and "Ad" label overlays (ARCHITECTURE §4.4; COMPLIANCE invariant 3).
 
-- "Ad" label: top-left, from 0.0 s to `render.ad_label_seconds` (config validation keeps it ≥ 3.0 s), text
-  `render.ad_label_text`. Always present, whatever the hook.
+- "Ad" label: top-left (moved to another top spot if a campaign overlay is there), from 0.0 s to
+  `render.ad_label_seconds` (config validation keeps it ≥ 3.0 s), text `render.ad_label_text`. Always present,
+  whatever the hook.
 - Hook: top third, 0 → `render.hook_seconds`, wrapped to short lines, in the account's style-preset font.
 
 Both are ASS events burned in by the same `ass` filter as the captions; the encoder records them in the
@@ -85,11 +86,19 @@ def overlay_styles(style: Style) -> list[AssStyle]:
     ]
 
 
-def overlay_events(hook: str, cfg: RenderConfig, play_res: tuple[int, int] = (1080, 1920)) -> list[AssEvent]:
+def overlay_events(
+    hook: str,
+    cfg: RenderConfig,
+    play_res: tuple[int, int] = (1080, 1920),
+    ad_label_at: tuple[int, int, int] = (7, *AD_LABEL_POS),
+) -> list[AssEvent]:
+    """`ad_label_at` = (ASS alignment, x, y); render.campaign_overlay moves it clear of a campaign overlay."""
     ad = ad_label_event(cfg)
-    x, y = AD_LABEL_POS
+    align, x, y = ad_label_at
     events = [
-        AssEvent(ad.start_s, ad.end_s, AD_LABEL_STYLE, f"{{\\an7\\pos({x},{y})}}{escape_text(ad.text)}", AD_LABEL_LAYER)
+        AssEvent(
+            ad.start_s, ad.end_s, AD_LABEL_STYLE, f"{{\\an{align}\\pos({x},{y})}}{escape_text(ad.text)}", AD_LABEL_LAYER
+        )
     ]
     h = hook_event(hook, cfg)
     if h is not None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from sqlalchemy.orm import Session
 
@@ -125,3 +127,19 @@ def test_is_refused_platform_url(url: str, refused: bool) -> None:
 
     assert is_refused_platform_url(url) is refused
     assert is_refused_platform_host(url) is refused
+
+
+def test_other_channel_refused_before_any_media(tmp_path: Path) -> None:
+    """A campaign that lists `stream_channels` never downloads a Twitch video from another channel: the metadata is
+    read first (no media), and nothing is written."""
+    from clipforge.ingest import twitch
+    from tests.ingest.test_twitch_limits import MetaYDL
+
+    MetaYDL.instances.clear()
+    MetaYDL.meta = {"uploader_id": "someoneelse", "is_live": False}
+    with pytest.raises(ComplianceError, match="someoneelse"):
+        twitch.download(
+            "https://www.twitch.tv/videos/1", tmp_path, "1", ytdl_factory=MetaYDL, channels=["fakestreamer"]
+        )
+    assert MetaYDL.instances[0].calls == [False]  # metadata only
+    assert list(tmp_path.iterdir()) == []

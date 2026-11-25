@@ -122,3 +122,38 @@ def test_wal_switch_reraises_other_errors() -> None:
 
     with pytest.raises(sqlite3.OperationalError, match="disk I/O"):
         db_session._enable_wal(Cur())
+
+
+def test_0002_upgrades_a_database_with_rows(tmp_path: Path) -> None:
+    """The live database already has campaigns: 0002 adds the new columns with safe defaults and keeps the rows."""
+    db = tmp_path / "old.db"
+    url = f"sqlite:///{db}"
+    upgrade(url, "0001")
+    con = sqlite3.connect(db)
+    con.execute(
+        "INSERT INTO campaigns (slug, platform_marketplace, name, url, submission_url, cpm_usd, min_payout_usd,"
+        " min_views_per_post, allowed_platforms, required_tags, disclosure_text, rules_notes, is_political, priority,"
+        " source_urls, content_kind, footage_mode, allow_stream_download, cpm_by_platform, min_payout_by_platform,"
+        " unpaid_viewer_countries, status, created_at, updated_at)"
+        " VALUES ('old', 'content_rewards', 'Old', 'https://e/a', 'https://e/a', 1.0, 0, 0, '[\"tiktok\"]', '[]',"
+        " '#ad', '', 0, 0, '[]', 'talk', 'supplied', 0, '{}', '{}', '[]',"
+        " 'active', '2026-11-22 00:00:00', '2026-11-22 00:00:00')"
+    )
+    con.commit()
+    con.close()
+    upgrade(url)
+    engine = make_engine(url)
+    with session_scope(make_session_factory(engine)) as s:
+        from clipforge.ingest.models import campaign_from_row
+
+        row = s.query(CampaignRow).one()
+        c = campaign_from_row(row)
+        assert c.name == "Old"
+        assert c.overlay is None
+        assert c.copy_style_notes == ""
+        assert c.stream_channels == []
+        assert c.max_source_minutes is None
+    with engine.connect() as conn:
+        cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(candidates)")}
+        assert "hook_history" in cols
+    engine.dispose()

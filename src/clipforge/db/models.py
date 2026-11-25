@@ -161,6 +161,10 @@ class CampaignRow(Base):
     min_payout_by_platform: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     unpaid_viewer_countries: Mapped[list[Any]] = mapped_column(JSON, default=list)
     participants: Mapped[int | None] = mapped_column(Integer)
+    overlay: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    copy_style_notes: Mapped[str] = mapped_column(Text, default="")
+    stream_channels: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    max_source_minutes: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[CampaignStatus] = mapped_column(
         _enum(CampaignStatus, "campaign_status"), default=CampaignStatus.ACTIVE
     )
@@ -213,6 +217,8 @@ class CandidateRow(Base):
     hook: Mapped[str | None] = mapped_column(String(120))
     title: Mapped[str | None] = mapped_column(String(120))
     captions_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    # Hooks this candidate had before its current one ("New hook" never repeats any of them).
+    hook_history: Mapped[list[Any]] = mapped_column(JSON, default=list)
     prompt_version: Mapped[str] = mapped_column(String(64))
     state: Mapped[ClipState] = mapped_column(_enum(ClipState, "candidate_state"), default=ClipState.CANDIDATE)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

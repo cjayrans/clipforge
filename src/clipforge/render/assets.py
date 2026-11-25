@@ -31,6 +31,14 @@ def assets_dir() -> Path:
     raise AssetNotFoundError(f"assets/ not found (looked in {_REPO_ASSETS} and {Path.cwd() / 'assets'})")
 
 
+def project_root() -> Path:
+    """Folder that holds `campaigns/` (campaign overlay paths are relative to it): the repo checkout, else <cwd>."""
+    for candidate in (_REPO_ASSETS.parent, Path.cwd()):
+        if (candidate / "campaigns").is_dir():
+            return candidate
+    return Path.cwd()
+
+
 def fonts_dir() -> Path:
     return assets_dir() / "fonts"
 

@@ -272,22 +272,41 @@ def has_tag(text: str, tag: str) -> bool:
 _has_tag = has_tag  # old private name, kept for callers written before Phase 2
 
 
+def _remove_tag(text: str, tag: str) -> str:
+    """Remove every whole-tag occurrence of `tag` (as `has_tag` matches it) and tidy the whitespace left behind."""
+    # A link: also drop any longer link that contains it (https://<tag>, <tag>/videos), not just the tag itself.
+    whole = rf"(?<![\w#]){re.escape(tag)}"
+    pattern = rf"\S*{whole}\S*" if contains_url(tag) else rf"{whole}(?![\w])"
+    out = re.sub(pattern, "", text, flags=re.IGNORECASE)
+    if out == text:
+        return text
+    lines = [_WS_RE.sub(" ", line).strip() for line in out.splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
 def normalize_caption(text: str, platform: Platform, campaign: CampaignIn) -> str:
     """Invariants 2 and 9. Return the caption to publish on `platform`.
 
-    Result: "#ad " + extra disclosure (campaign.disclosure_text without its leading #ad) + body + any missing
-    required tags. X captions have URLs removed. If over the platform limit, the body is shortened at a word
-    boundary; the prefix and tags are never cut.
+    Result: "#ad " + extra disclosure (campaign.disclosure_text without its leading #ad) + body + the campaign's
+    required tags, always last and in the campaign's order (a required tag the copy already used is moved to the
+    end, not repeated). X captions have URLs removed; a required tag that is a URL cannot go on X (invariant 9) and
+    raises. If over the platform limit, the body is shortened at a word boundary; the prefix and tags are never cut.
     """
     extra = _strip_leading_ad(campaign.disclosure_text)
     body = _strip_leading_ad(text)
     if platform is Platform.X:
         extra = strip_urls(extra)
         body = strip_urls(body)
-    tags = [t.strip() for t in campaign.required_tags if t.strip()]
-    missing = [t for t in tags if not has_tag(f"{extra} {body}", t)]
-    # De-duplicate while keeping order.
-    missing = list(dict.fromkeys(missing))
+    # De-duplicate (case-insensitive) while keeping order.
+    missing: list[str] = []
+    for tag in (t.strip() for t in campaign.required_tags):
+        if tag and not any(tag.lower() == m.lower() for m in missing):
+            missing.append(tag)
+    if platform is Platform.X and any(contains_url(t) for t in missing):
+        raise ComplianceError(9, "a required caption tag is a URL, and X captions may not contain URLs")
+    for tag in missing:
+        extra = _remove_tag(extra, tag)
+        body = _remove_tag(body, tag)
 
     def compose(b: str) -> str:
         parts = [AD_PREFIX, extra, b, " ".join(missing)]
@@ -364,11 +383,32 @@ def render_manifest_problems(manifest: RenderManifest) -> list[str]:
     if (manifest.width, manifest.height) != (RENDER_WIDTH, RENDER_HEIGHT):
         problems.append(f"resolution {manifest.width}x{manifest.height}, expected {RENDER_WIDTH}x{RENDER_HEIGHT}")
     problems.extend(duration_problems(manifest.duration_s))
+    problems.extend(overlay_problems(manifest))
+    return problems
+
+
+def overlay_problems(manifest: RenderManifest) -> list[str]:
+    """Invariant 3 with a campaign overlay: the 'Ad' label stays clear of the overlay's visible pixels, and a
+    full-duration overlay is on screen from 0.0 s to the end of the clip."""
+    ov = manifest.overlay
+    if ov is None:
+        return []
+    problems: list[str] = []
+    if manifest.ad_label_rect is None:
+        problems.append("clip has a campaign overlay but no recorded 'Ad' label position")
+    elif manifest.ad_label_rect.intersects(ov.opaque_rect):
+        problems.append("the campaign overlay covers the 'Ad' label")
+    if ov.full_duration and (ov.start_s > 0.0 or ov.end_s < manifest.duration_s - 0.05):
+        problems.append(
+            f"campaign overlay shown {ov.start_s:.2f}-{ov.end_s:.2f}s, must cover the whole clip "
+            f"(0.00-{manifest.duration_s:.2f}s)"
+        )
     return problems
 
 
 def assert_render_manifest(manifest: RenderManifest) -> None:
-    """Invariants 3 and 10: 'Ad' label from 0.0 s to >= 3.0 s, source audio only, 1080x1920, 10-90 s."""
+    """Invariants 3 and 10: 'Ad' label from 0.0 s to >= 3.0 s and clear of any campaign overlay, source audio
+    only, 1080x1920, 10-90 s."""
     problems = render_manifest_problems(manifest)
     if problems:
         raise ComplianceError(3, "; ".join(problems))

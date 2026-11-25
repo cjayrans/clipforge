@@ -174,7 +174,7 @@ def test_rank_source_end_to_end(client, fake, talk, app_config):
     assert len(copy_calls) == len(result.candidates)
     assert all(b["tools"][0]["name"] == TOOL_NAME for b in score_calls)
     for cand in result.candidates:
-        assert cand.prompt_version == result.prompt_version == "score_windows@1+clip_copy@1"
+        assert cand.prompt_version == result.prompt_version == "score_windows@1+clip_copy@2"
         assert cand.copy_ is not None
         assert all(c.text.startswith("#ad ") and "#GTA6" in c.text for c in cand.copy_.captions)
         assert 10 <= cand.end_s - cand.start_s <= 90
