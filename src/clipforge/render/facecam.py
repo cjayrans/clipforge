@@ -618,7 +618,7 @@ def default_presence(path: Path, box: PxBox, start_s: float, end_s: float) -> Pr
         try:
             src = probe(path)
         except (ProbeError, OSError) as exc:
-            return replace(presence, problem=f"cannot probe the source ({exc})")
+            return replace(presence, ratio=0.0, problem=f"cannot probe the source ({exc})")
         fullcam = clip_fullcam_ratio(path, start_s, end_s, src.width or 0, src.height or 0, detector=detector)
     if fullcam is None:
         return replace(presence, ratio=0.0, problem="no whole frames read from the clip")

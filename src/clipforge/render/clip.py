@@ -145,7 +145,9 @@ def _choose_layout(
                     raise layouts.LayoutUnavailable(
                         f"the clip is a full-screen camera shot in {presence.fullcam_ratio:.0%} of its frames"
                     )
-                if presence.variation is not None and presence.variation < MIN_FACE_VARIATION:
+                if presence.variation is None:
+                    raise layouts.LayoutUnavailable("the facecam face could not be checked for movement")
+                if presence.variation < MIN_FACE_VARIATION:
                     raise layouts.LayoutUnavailable(
                         f"the face in the facecam box never changes (variation {presence.variation:.1f}): "
                         "a picture, not a person"

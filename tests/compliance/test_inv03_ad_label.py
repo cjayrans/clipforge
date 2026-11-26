@@ -307,7 +307,7 @@ def test_every_layout_keeps_label_hook_captions_overlay_and_face_apart(
     write_overlay_png(root, size=(2172, 724), margin=(100, 140))
     monkeypatch.setattr(clip_mod, "project_root", lambda: root)
     fakes = Fakes()
-    fakes.presence = Presence(ratio=0.9, samples=60, face=PxBox(x=172, y=64, w=100, h=110))
+    fakes.presence = Presence(ratio=0.9, samples=60, face=PxBox(x=172, y=64, w=100, h=110), variation=20.0)
     ov = CampaignOverlay.model_validate(
         {"path": FAKE_OVERLAY_REL, "position": {"x_pct": 50, "y_pct": 31.5}, "scale": 0.6}
     )
