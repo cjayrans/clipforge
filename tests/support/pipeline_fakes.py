@@ -83,11 +83,13 @@ class FakeRender:
 
         self.presence_result: Any = Presence(ratio=0.0, samples=0, problem="fake: no face")
         self.facecam_calls: list[Path] = []
+        self.facecam_windows: list[list[tuple[float, float]]] = []
         self.facecam_result: Any = None  # render.facecam.FacecamDetection or None (detection could not run)
         self.face_ratio: float | None = None
 
-    def facecam(self, path: Path) -> Any:
+    def facecam(self, path: Path, windows: list[tuple[float, float]]) -> Any:
         self.facecam_calls.append(path)
+        self.facecam_windows.append(windows)
         return self.facecam_result
 
     def face_check(self, clip: Path, panel: Any, duration: float) -> float | None:

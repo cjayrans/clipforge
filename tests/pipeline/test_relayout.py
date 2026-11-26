@@ -82,7 +82,7 @@ def test_relayout_moves_a_pending_clip_to_stacked_and_keeps_its_copy(
     pipe_settings: Settings, db: sessionmaker[Session], deps: PipelineDeps, render: FakeRender, pending: list[int]
 ) -> None:
     render.facecam_result = FOUND
-    render.presence_result = Presence(ratio=0.9, samples=60, face=PxBox(x=172, y=64, w=100, h=110))
+    render.presence_result = Presence(ratio=0.9, samples=60, face=PxBox(x=172, y=64, w=100, h=110), variation=20.0)
     render.face_ratio = 0.9
     before, cand_before = _snapshot(db, pending[0])
     with session_scope(db) as s:
@@ -117,6 +117,9 @@ def test_facecam_is_detected_once_per_source(
     for cid in pending[:2]:
         assert relayout_one(pipe_settings, db, cid, deps).ok
     assert len(render.facecam_calls) == calls_after_nightly + 1
+    with session_scope(db) as s:
+        windows = sorted((c.start_s, c.end_s) for c in s.scalars(select(CandidateRow)))
+    assert sorted(render.facecam_windows[-1]) == windows  # detection samples inside the source's clip windows
     with session_scope(db) as s:
         src = s.scalars(select(SourceRow)).one()
         assert src.facecam_json is not None

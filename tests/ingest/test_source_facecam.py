@@ -23,7 +23,8 @@ SRC = ProbeResult(
 )  # fmt: skip
 FOUND = FacecamDetection(
     status="found", src_w=1920, src_h=1080, hits=31, samples=40,
-    box=PxBox(x=1400, y=700, w=444, h=264), face=PxBox(x=1572, y=764, w=100, h=110),
+    box=PxBox(x=1400, y=700, w=444, h=264), face=PxBox(x=1572, y=764, w=100, h=110), gameplay=40,
+    variation=14.2,
 )  # fmt: skip
 
 
@@ -41,7 +42,7 @@ def test_detects_once_stores_and_audits(factory: Factory, session: Session, tmp_
     src = _source(factory, tmp_path)
     calls: list[Path] = []
 
-    def detect(path: Path) -> FacecamDetection:
+    def detect(path: Path, windows: list[tuple[float, float]]) -> FacecamDetection:
         calls.append(path)
         return FOUND
 
@@ -58,7 +59,7 @@ def test_detects_once_stores_and_audits(factory: Factory, session: Session, tmp_
 def test_detection_that_cannot_run_is_an_error(factory: Factory, session: Session, tmp_path: Path) -> None:
     src = _source(factory, tmp_path)
     with pytest.raises(RegistryError, match="could not run"):
-        source_facecam(session, None, src.id, detect_fn=lambda p: None, probe_fn=lambda p: SRC)
+        source_facecam(session, None, src.id, detect_fn=lambda p, w: None, probe_fn=lambda p: SRC)
     assert src.facecam_json is None
 
 
@@ -67,19 +68,22 @@ def test_debug_images(factory: Factory, session: Session, tmp_path: Path, capsys
     out = tmp_path / "out" / "facecam.jpg"
     out.parent.mkdir()
     source_facecam(
-        session, None, src.id, debug_image=out, detect_fn=lambda p: FOUND, probe_fn=lambda p: SRC, grab=_grab
+        session, None, src.id, debug_image=out, detect_fn=lambda p, w: FOUND, probe_fn=lambda p: SRC, grab=_grab
     )
     assert out.is_file()
     assert (out.parent / "facecam_stacked.jpg").is_file()
     printed = " ".join(capsys.readouterr().out.split())  # rich wraps long lines
-    assert "facecam x 1400, y 700, 444x264 px of 1920x1080 (face in 31 of 40 sampled frames)" in printed
+    assert (
+        "facecam x 1400, y 700, 444x264 px of 1920x1080 (face in 31 of 40 gameplay frames; "
+        "40 gameplay / 0 full-screen camera of 40 sampled frames, variation 14.2)"
+    ) in printed
 
 
 def test_campaign_box_wins_over_detection(factory: Factory, session: Session, tmp_path: Path) -> None:
     box = {"x_pct": 75, "y_pct": 65, "w_pct": 23, "h_pct": 24}
     src = _source(factory, tmp_path, facecam_box=box)
 
-    def detect(path: Path) -> FacecamDetection:
+    def detect(path: Path, windows: list[tuple[float, float]]) -> FacecamDetection:
         raise AssertionError("detection must not run when the campaign sets facecam_box")
 
     assert source_facecam(session, None, src.id, detect_fn=detect, probe_fn=lambda p: SRC) is None
@@ -88,4 +92,18 @@ def test_campaign_box_wins_over_detection(factory: Factory, session: Session, tm
 def test_missing_media_is_refused(factory: Factory, session: Session) -> None:
     src = factory.source(factory.campaign(content_kind="game"), local_path="/nope/vod.mp4")
     with pytest.raises(RegistryError, match="not on disk"):
-        source_facecam(session, None, src.id, detect_fn=lambda p: FOUND, probe_fn=lambda p: SRC)
+        source_facecam(session, None, src.id, detect_fn=lambda p, w: FOUND, probe_fn=lambda p: SRC)
+
+
+def test_no_store_shows_without_saving(factory: Factory, session: Session, tmp_path: Path) -> None:
+    src = _source(factory, tmp_path)
+    seen: list[list[tuple[float, float]]] = []
+    factory.candidate(src, start_s=100.0, end_s=130.0)
+
+    def detect(path: Path, windows: list[tuple[float, float]]) -> FacecamDetection:
+        seen.append(windows)
+        return FOUND
+
+    assert source_facecam(session, None, src.id, store=False, detect_fn=detect, probe_fn=lambda p: SRC) == FOUND
+    assert src.facecam_json is None
+    assert seen == [[(100.0, 130.0)]]  # sampled inside the source's clip windows

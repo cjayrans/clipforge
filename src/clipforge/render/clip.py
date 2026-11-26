@@ -39,7 +39,13 @@ from clipforge.render.encode import (
     run_ffmpeg,
     sha256_file,
 )
-from clipforge.render.facecam import FacecamSpec, Presence, default_presence
+from clipforge.render.facecam import (
+    MIN_FACE_VARIATION,
+    STACKED_MAX_FULLCAM_RATIO,
+    FacecamSpec,
+    Presence,
+    default_presence,
+)
 from clipforge.render.overlays import AD_LABEL_STYLE, HOOK_STYLE, has_dark_box, overlay_events, overlay_styles
 from clipforge.render.reframe import Detector, fit_blur, plan_crops
 from clipforge.render.saliency import MotionSample, motion_samples
@@ -134,6 +140,17 @@ def _choose_layout(
                     raise layouts.LayoutUnavailable(
                         f"a face is in the facecam box in {presence.ratio:.0%} of {presence.samples} sampled frames, "
                         f"needs {layouts.STACKED_MIN_FACE_RATIO:.0%}{detail}"
+                    )
+                if presence.fullcam_ratio > STACKED_MAX_FULLCAM_RATIO:
+                    raise layouts.LayoutUnavailable(
+                        f"the clip is a full-screen camera shot in {presence.fullcam_ratio:.0%} of its frames"
+                    )
+                if presence.variation is None:
+                    raise layouts.LayoutUnavailable("the facecam face could not be checked for movement")
+                if presence.variation < MIN_FACE_VARIATION:
+                    raise layouts.LayoutUnavailable(
+                        f"the face in the facecam box never changes (variation {presence.variation:.1f}): "
+                        "a picture, not a person"
                     )
                 face = layouts.face_rect_out(presence.face, facecam_box)
                 panel = layouts.facecam_panel()

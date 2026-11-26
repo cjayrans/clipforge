@@ -231,13 +231,14 @@ def source_facecam(
     redetect: Annotated[
         bool, typer.Option("--redetect", help="Run detection again even if a result is stored.")
     ] = False,
+    no_store: Annotated[bool, typer.Option("--no-store", help="Show a new detection without saving it.")] = False,
     debug_image: Annotated[
         Path | None,
         typer.Option(help="Write a JPEG of a sample frame with the face/facecam boxes (and a *_stacked.jpg preview)."),
     ] = None,
 ) -> None:
     """Show the facecam box of a source (detecting it if needed; stored on the source)."""
-    _delegate(ctx, "source facecam", source_id, redetect=redetect, debug_image=debug_image)
+    _delegate(ctx, "source facecam", source_id, redetect=redetect, store=not no_store, debug_image=debug_image)
 
 
 @source_app.command("retry")
