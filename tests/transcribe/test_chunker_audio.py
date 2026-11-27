@@ -224,3 +224,22 @@ def test_real_extract_and_cut(tmp_path: Path) -> None:
     paths = audio.cut_chunks(out, plans, tmp_path / "chunks")
     for plan, path in zip(plans, paths, strict=True):
         assert media.probe(path).duration_s == pytest.approx(plan.duration_s, abs=0.2)
+
+
+@pytest.mark.needs_ffmpeg
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_real_silence_pass(tmp_path: Path) -> None:
+    """Tone 0-5 s, silence 5-7 s, tone 7-12 s: one silence found at about 5-7 s."""
+    import subprocess
+
+    out = tmp_path / "a.mp3"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=12:sample_rate=16000",
+         "-af", "volume='if(between(t,5,7),0,1)':eval=frame", "-ac", "1", "-b:a", "32k", str(out)],
+        check=True,
+    )  # fmt: skip
+    found = audio.silences(out)
+    assert len(found) == 1
+    start, end = found[0]
+    assert start == pytest.approx(5.0, abs=0.3)
+    assert end == pytest.approx(7.0, abs=0.3)
