@@ -109,7 +109,7 @@ def test_moment_campaign_stores_calibration_fields(
             assert names == ["signal_pair", "audio_evidence", "brief", "skip_rules", "content", "window", "min_score"]
             assert r.skip_flags == []
             assert r.review_flags == []
-            assert r.prompt_version == "propose_moments@2+score_moments@2+judge_frames@2+clip_copy@3"
+            assert r.prompt_version == "propose_moments@2+score_moments@3+judge_frames@2+clip_copy@3"
             assert 12 <= r.end_s - r.start_s <= 45
             assert r.hook  # written right before rendering
             model = _candidate_model(r)  # what a "New hook" re-render hands the copywriter

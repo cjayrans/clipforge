@@ -149,3 +149,34 @@ def test_per_source_cap_at_copy_time_skips_the_candidate_not_the_source(
         assert all(c.state is ClipState.CANDIDATE for c in cands)  # skipped; they expire after 3 days
         alerts = s.scalars(select(EventRow).where(EventRow.to_state == "source_spend_cap")).all()
         assert len(alerts) == 1  # one alert per source per run
+
+
+def test_a_stage_timeout_fails_the_source_and_the_night_goes_on(
+    pipe_settings: Settings, db: sessionmaker[Session], deps: PipelineDeps, anthropic: FakeAnthropic
+) -> None:
+    from clipforge.ingest import watchdog
+
+    class StuckTranscriber:
+        provider, model = "groq", "whisper-large-v3-turbo"
+        calls = 0
+
+        def transcribe_chunk(self, path, duration_s):
+            StuckTranscriber.calls += 1
+            raise watchdog.StageTimeout("stage transcribe used its 15 min ceiling of active time")
+
+    with two_sources_http():
+        _, first = add_campaign(db, pipe_settings, moment_profile="gta6-streamer", name="First")
+        _, second = add_campaign(db, pipe_settings, moment_profile="gta6-streamer", name="Second", url=SECOND_URL)
+        anthropic.default = moment_tools(other=lambda body: json_text(copy_payload("A hook")))
+        report = run_once(
+            pipe_settings, deps=replace(deps, moment_signals=good_signals(), transcriber=StuckTranscriber())
+        )
+    assert report.sources_seen == 2  # the second source was still tried
+    with session_scope(db) as s:
+        for sid in (first, second):
+            src = s.get(SourceRow, sid)
+            assert src.status is SourceStatus.FAILED
+            assert src.fail_reason == "stage_timeout"
+        alerts = s.scalars(select(EventRow).where(EventRow.to_state == "pipeline_stage_failed")).all()
+        assert len(alerts) == 2
+        assert all("cf source retry" in a.detail for a in alerts)

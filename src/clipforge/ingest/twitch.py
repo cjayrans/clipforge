@@ -134,22 +134,35 @@ def download(
     out_dir.mkdir(parents=True, exist_ok=True)
     factory = ytdl_factory or _default_factory
     max_seconds = max_minutes * 60 if max_minutes else None
-    try:
-        with factory(ytdl_options(out_dir, stem, max_seconds=max_seconds)) as ydl:
-            if channels or disk_check is not None:
-                meta = ydl.extract_info(url, download=False)
-                if not isinstance(meta, dict):
-                    raise DownloadError("yt-dlp returned no info")
-                check_channel(meta, channels)
-                if meta.get("is_live"):
-                    raise DownloadError("this Twitch VOD is still live (recording); download it after the stream")
-                if disk_check is not None:
-                    disk_check(meta)
-            info = ydl.extract_info(url, download=True)
-    except (ComplianceError, DownloadError):
-        raise
-    except Exception as exc:  # yt_dlp.utils.DownloadError / ExtractorError and network errors
-        raise DownloadError(f"Twitch download failed: {type(exc).__name__}: {exc}") from exc
+    from clipforge.ingest import watchdog
+
+    info: Any = None
+    for attempt in range(watchdog.STALL_RETRIES + 1):
+        guard = DownloadGuard()
+        opts = ytdl_options(out_dir, stem, max_seconds=max_seconds)
+        opts["progress_hooks"] = [guard.hook]
+        try:
+            with factory(opts) as ydl:
+                if attempt == 0 and (channels or disk_check is not None):
+                    meta = ydl.extract_info(url, download=False)
+                    if not isinstance(meta, dict):
+                        raise DownloadError("yt-dlp returned no info")
+                    check_channel(meta, channels)
+                    if meta.get("is_live"):
+                        raise DownloadError("this Twitch VOD is still live (recording); download it after the stream")
+                    if disk_check is not None:
+                        disk_check(meta)
+                info = ydl.extract_info(url, download=True)
+        except (ComplianceError, DownloadError):
+            raise
+        except Exception as exc:  # yt_dlp.utils.DownloadError / ExtractorError and network errors
+            if isinstance(guard.error, watchdog.StepStalled) and attempt < watchdog.STALL_RETRIES:
+                log.warning("Twitch download stalled; retrying (%d/%d)", attempt + 1, watchdog.STALL_RETRIES)
+                continue
+            if guard.error is not None:  # raised from our progress hook (yt-dlp may wrap it)
+                raise guard.error from exc
+            raise DownloadError(f"Twitch download failed: {type(exc).__name__}: {exc}") from exc
+        break
 
     if not isinstance(info, dict):
         raise DownloadError("yt-dlp returned no info")
@@ -169,6 +182,34 @@ def download(
     if path is None:
         raise DownloadError("yt-dlp finished but no file was written")
     return path
+
+
+class DownloadGuard:
+    """yt-dlp progress hook: StageTimeout at the download stage's active-time ceiling, StepStalled when the byte
+    count has not grown for watchdog.STALL_S of active time (a dead socket is caught sooner by `socket_timeout`)."""
+
+    def __init__(self) -> None:
+        from clipforge.ingest import watchdog
+
+        self._wd = watchdog
+        self.error: Exception | None = None
+        self._bytes = -1
+        self._since = watchdog.CLOCK.now()
+
+    def hook(self, d: dict[str, Any]) -> None:
+        wd = self._wd
+        try:
+            wd.check()
+        except wd.StageTimeout as exc:
+            self.error = exc
+            raise
+        got = d.get("downloaded_bytes")
+        now = wd.CLOCK.now()
+        if isinstance(got, int | float) and got != self._bytes:
+            self._bytes, self._since = int(got), now
+        elif d.get("status") == "downloading" and now - self._since >= wd.STALL_S:
+            self.error = wd.StepStalled(f"Twitch download made no progress for {wd.STALL_S / 60:.0f} min")
+            raise self.error
 
 
 def _downloaded_path(info: dict[str, Any], out_dir: Path, stem: str) -> Path | None:

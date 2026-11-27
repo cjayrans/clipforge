@@ -262,7 +262,7 @@ def test_rank_moments_end_to_end(fake: FakeAnthropic, client: ClaudeClient, prof
         motion=MOTION,
         frames=frames_factory,
     )
-    assert result.prompt_version == "propose_moments@2+score_moments@2+judge_frames@2+clip_copy@3"
+    assert result.prompt_version == "propose_moments@2+score_moments@3+judge_frames@2+clip_copy@3"
     run = result.moment_run
     assert {e.moment.found_by for e in run.evaluated} >= {"content", "signals"}
     assert all(c.copy_ is None for c in result.candidates)  # copy comes later, for the night's picks only
@@ -346,3 +346,36 @@ def test_spend_cap_stops_the_moment_ranker_before_any_request(
     with pytest.raises(costs.SpendCapReached):
         rank_moments(transcript(REACTION_SCRIPT), campaign_in(), [Platform.TIKTOK], profile, client=client)
     assert fake.requests == []
+
+
+def test_long_window_starts_at_the_first_beat(profile) -> None:
+    m = bare(100.0, 140.0, 139.0)
+    d = apply_window_rules(
+        m, item(m, start_s=100.0, end_s=141.0, first_beat_s=125.0, payoff_s=139.0), profile, [], 3600
+    )
+    assert d.start_s == pytest.approx(124.7)
+    assert d.end_s == pytest.approx(140.5)
+    assert d.end_s - d.start_s <= profile.window.target_max_s
+    assert any("first beat" in n for n in d.notes)
+
+
+def test_a_moment_that_needs_its_setup_may_run_past_30s(profile) -> None:
+    m = bare(100.0, 140.0, 139.0)
+    d = apply_window_rules(
+        m, item(m, start_s=100.0, end_s=141.0, first_beat_s=101.0, payoff_s=139.0), profile, [], 3600
+    )
+    assert d.end_s - d.start_s > profile.window.target_max_s
+    assert not d.too_long
+    assert any("over the 30s target" in n for n in d.notes)
+
+
+def test_end_is_payoff_plus_post_roll_on_a_word_edge(profile) -> None:
+    setup = words_at([(100.0, "so this button buys the car")])
+    words = setup + words_at([(116.2, "okay okay")])  # "okay" 116.2-116.5 contains payoff + 1.5 = 116.3
+    m = bare(100.0, 130.0, 114.8)
+    d = apply_window_rules(m, item(m, start_s=100.0, end_s=130.0, payoff_s=114.8), profile, words, 3600)
+    assert d.end_s == pytest.approx(116.5)  # within 0.4 s: to the word's end
+    words = words_at([(116.0, "aaaaaaaaaaaaa")])
+    long_word = setup + [w.model_copy(update={"end_s": 117.5}) for w in words]  # ends 1.2 s after: cut before it
+    d = apply_window_rules(m, item(m, start_s=100.0, end_s=130.0, payoff_s=114.8), profile, long_word, 3600)
+    assert d.end_s == pytest.approx(116.0)

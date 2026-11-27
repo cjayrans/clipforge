@@ -1,6 +1,6 @@
 ---
 name: score_moments
-version: "2"
+version: "3"
 model_role: rank
 notes: Haiku moment ranker (moments-v2). Forced tool `score_moments`; six-part rubric from the campaign's moment profile. Variables $campaign_brief, $ranker_notes, $catalogue, $rejects, $rubric, $skip_rules, $review_flags, $min_s, $target_min_s, $target_max_s, $max_s, $post_roll_s, $context_s, $fewshots, $n_candidates, $candidates.
 ---
@@ -42,7 +42,9 @@ For every candidate:
   at the start; include the setup only when the payoff needs it. End right after the payoff, at most $post_roll_s
   seconds later. Aim for $target_min_s-$target_max_s seconds; never shorter than $min_s or longer than $max_s. Never
   cut the moment short: if the payoff runs past the candidate's window, extend the clip to include it.
-- `payoff_s`: when the payoff ends.
+- `first_beat_s`: the first beat a stranger must see for the payoff to land (often the trigger itself). A clip
+  over $target_max_s seconds is cut to start there, so only a moment that truly needs a longer setup runs longer.
+- `payoff_s`: when the payoff ends. The clip ends $post_roll_s seconds after it.
 - `brief_ok`: false only if the content breaks the campaign brief or rules, or is hateful or harassing. Do NOT set it
   false for sexual or graphic content: score the moment, and set the matching review flag instead.
 - `skip_flags`: every skip rule below that applies (usually none).

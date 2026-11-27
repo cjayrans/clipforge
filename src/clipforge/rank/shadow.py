@@ -51,7 +51,7 @@ from clipforge.db import (
     utcnow,
 )
 from clipforge.db.migrate import upgrade
-from clipforge.ingest import disk, media
+from clipforge.ingest import disk, media, watchdog
 from clipforge.publish.queries import campaign_model
 from clipforge.rank.claude_client import ClaudeClient
 from clipforge.rank.media_signals import MediaSignals
@@ -158,6 +158,16 @@ def _ts(t: float) -> str:
     h, rem = divmod(int(t), 3600)
     m, s = divmod(rem, 60)
     return f"{h}:{m:02d}:{s:02d}"
+
+
+def length_stats(spans: Sequence[float], over_s: float) -> str:
+    """'median | p90 | share over' cells for a list of clip lengths."""
+    if not spans:
+        return "- | - | -"
+    ordered = sorted(spans)
+    p90 = ordered[min(len(ordered) - 1, max(0, round(0.9 * len(ordered)) - 1))]
+    over = sum(1 for x in ordered if x > over_s + 1e-6) / len(ordered)
+    return f"{statistics.median(ordered):.1f} s | {p90:.1f} s | {over:.0%}"
 
 
 def _vision(v: dict[str, Any] | None) -> str:
@@ -281,6 +291,21 @@ def render_shadow_report(
                 f"{o['v1']} | {_md(o['hook'])} | {'#' + ', #'.join(map(str, hit)) if hit else 'no'} | "
                 f"{_md(_old_window_verdict(o, run, profile))} |"
             )
+    # clip length
+    win = profile.window
+    lines += [
+        "",
+        "## Clip length",
+        "",
+        f"Target {win.target_min_s:g}-{win.target_max_s:g} s, hard cap {win.max_s:g} s.",
+        "",
+        "| set | n | median | p90 | over 30 s |",
+        "|---|---|---|---|---|",
+    ]
+    kept_spans = [e.window.end_s - e.window.start_s for e in run.evaluated if e.score is not None]
+    top_spans = [c.end_s - c.start_s for c in candidates]
+    for label, spans in (("top 10", top_spans), ("every kept candidate", kept_spans)):
+        lines.append(f"| {label} | {len(spans)} | {length_stats(spans, profile.window.target_max_s)} |")
     # distribution by archetype (every scored candidate, kept or not)
     by_arch: dict[str, list[float]] = {}
     kept: dict[str, int] = {}
@@ -338,6 +363,9 @@ def render_shadow_report(
         "|---|---|",
         *[f"| {k} | {usd:.4f} |" for k, usd in sorted(stats.spend_by_stage.items())],
         f"| **total** | **{total:.4f}** |",
+        "",
+        f"Vision coverage: {sum(1 for c in candidates if c.moment and c.moment.vision)} of {len(candidates)} final "
+        "picks checked.",
         "",
         f"Keyframe check: {v.checked} candidate(s), {v.frames_sent} image(s), ${v.cost_usd:.4f} "
         f"(${per:.4f} per candidate)" + (f"; {len(v.failed)} failed" if v.failed else "") + ".",
@@ -450,7 +478,8 @@ def shadow_rank(
             check()  # before downloading anything
             stack.enter_context(costs.extra_guard(check))
 
-        with costs.for_source(source_id, "shadow-download"):
+        stack.enter_context(watchdog.stage("source"))  # 90 min of active time for the whole run
+        with costs.for_source(source_id, "shadow-download"), watchdog.stage("download"):
             if full and compliance.classify_source_host(source.url) is SourceHost.TWITCH:
                 path = _download_full(settings, source, camp, scratch, deps, stats)
             elif source.local_path and Path(source.local_path).is_file():
@@ -460,7 +489,7 @@ def shadow_rank(
 
         started = time.monotonic()
         if full:
-            with session_scope(factory) as s, costs.for_source(source_id, "transcribe"):
+            with session_scope(factory) as s, costs.for_source(source_id, "transcribe"), watchdog.stage("transcribe"):
                 src = s.get(SourceRow, source_id)
                 assert src is not None
                 transcript, _ = transcribe_media(
@@ -473,6 +502,7 @@ def shadow_rank(
         stats.duration_s = transcript.duration_s
         stats.transcript_words = len(transcript.words)
 
+        stack.enter_context(watchdog.stage("rank"))  # signals + content pass + scoring + vision
         started = time.monotonic()
         sig_fn = deps.signals or (lambda p, rules: extract_media_signals(p, rules, deps.runner))
         signals = sig_fn(path, profile.signals)

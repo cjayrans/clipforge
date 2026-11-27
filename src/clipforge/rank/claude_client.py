@@ -99,6 +99,9 @@ class ClaudeClient:
     # ----------------------------------------------------------------------------------------------
 
     def _create(self, **params: Any) -> tuple[anthropic.types.Message, int]:
+        from clipforge.ingest import watchdog
+
+        watchdog.check()  # StageTimeout when the rank/copy stage used its active-time ceiling
         with session_scope(self.ledger) as s:
             costs.guard(s, self.app)  # raises SpendCapReached before spending anything
         attempts = 0

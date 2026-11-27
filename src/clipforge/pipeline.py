@@ -80,7 +80,7 @@ from clipforge.db import (
     utcnow,
 )
 from clipforge.db.migrate import upgrade
-from clipforge.ingest import media
+from clipforge.ingest import media, watchdog
 from clipforge.ingest.download import DownloadError, GDriveClient, download_source
 from clipforge.ingest.inbox import scan_inbox
 from clipforge.ingest.models import clip_windows, facecam_from_row, set_source_status, store_facecam
@@ -138,6 +138,9 @@ RENDER_RETRIES = 1  # one more try next night, then the candidate expires
 RERENDER_FLAG = "rerender:"  # + clip id; set while a New hook / Shorter re-render runs
 STRANDED_AFTER = timedelta(hours=1)  # a clip left RENDERED longer than this by a re-render is recovered
 CANDIDATE_TTL = timedelta(days=3)  # an unrendered candidate expires this long after ranking (moments-v2)
+# Phase A starts another source only while the night has used less than this much active time; with the 90 min
+# per-source ceiling (ingest/watchdog.CEILINGS) a night's ranking can never run for hours.
+NIGHT_RANK_BUDGET_S = 60 * 60.0
 RUBRIC_COLUMNS = ("hook", "arc", "arousal", "sendability", "clarity", "density")  # CandidateRow.score_<id>
 V1_COLUMNS = ("reaction", "event", "setup", "absurdity")  # weights_version gta6-streamer-v1
 
@@ -545,6 +548,8 @@ class Pipeline:
             raise
         except costs.SourceSpendCapReached as exc:
             self._source_capped(exc)
+        except watchdog.WatchdogError:
+            raise  # the caller marks the source (or candidate) failed
         except _StageFailed as exc:
             self._problem(f"{stage} {entity}: {exc}")
         except Exception as exc:
@@ -576,7 +581,12 @@ class Pipeline:
         self._isolated("sweep", "campaigns", self._sweep_inactive)
         self._isolated("sweep", "stranded", self._recover_stranded)
         try:
+            night_started = watchdog.CLOCK.now()
             for source_id in self._work_queue():  # Phase A: rank every source of the night first
+                if watchdog.CLOCK.now() - night_started >= NIGHT_RANK_BUDGET_S:
+                    self._problem(f"ranking budget of {NIGHT_RANK_BUDGET_S / 60:.0f} min used; source {source_id} "
+                                  "waits for the next night")  # fmt: skip
+                    break
                 self.report.sources_seen += 1
                 self._process_source(source_id)
             self._isolated("sweep", "stale candidates", self._expire_stale)
@@ -673,16 +683,33 @@ class Pipeline:
             (SourceStatus.TRANSCRIBED, "rank", self._rank),
         ]
         timings: list[str] = []
-        for status, name, fn in stages:
-            if self._source_status(source_id) is not status:
-                continue
-            started = time.monotonic()
-            with costs.for_source(source_id, name):
-                self._isolated(name, f"source {source_id}", lambda fn=fn: fn(source_id))
-            timings.append(f"{name} {time.monotonic() - started:.0f}s")
-            if self._source_status(source_id) is status:
-                break  # the stage did not advance the source; it is retried next night
+        try:
+            with watchdog.stage("source"):
+                for status, name, fn in stages:
+                    if self._source_status(source_id) is not status:
+                        continue
+                    started = watchdog.CLOCK.now()
+                    try:
+                        with costs.for_source(source_id, name), watchdog.stage(name):
+                            self._isolated(name, f"source {source_id}", lambda fn=fn: fn(source_id))
+                    finally:
+                        timings.append(f"{name} {watchdog.CLOCK.now() - started:.0f}s")
+                    if self._source_status(source_id) is status:
+                        break  # the stage did not advance the source; it is retried next night
+        except watchdog.WatchdogError as exc:
+            self._watchdog_failed(source_id, exc)
         self._source_stats(source_id, timings)
+
+    def _watchdog_failed(self, source_id: int, exc: watchdog.WatchdogError) -> None:
+        """A stage stalled or used its ceiling: the source fails with an alert (`cf source retry` to try again)."""
+        reason = "stage_timeout" if isinstance(exc, watchdog.StageTimeout) else "stalled"
+        message = f"source {source_id} failed: {exc}. Check the footage, then `cf source retry {source_id}`."
+        self._problem(message)
+        with session_scope(self.factory) as s:
+            src = s.get(SourceRow, source_id)
+            if src is not None and src.status not in (SourceStatus.FAILED, SourceStatus.PURGED):
+                set_source_status(s, src, SourceStatus.FAILED, fail_reason=reason, detail=str(exc)[:500])
+            alerts.raise_alert(s, alerts.PIPELINE_STAGE_FAILED, source_id, message[:500])
 
     def _source_stats(self, source_id: int, timings: list[str]) -> None:
         """One report line per source: file size, free disk, stage wall times, spend so far."""
@@ -966,9 +993,9 @@ class Pipeline:
             return
         if not hook:  # moment candidates get copy only once they are picked to render (moments-v2)
             try:
-                with costs.for_source(inputs.source_id, "copy"):
+                with costs.for_source(inputs.source_id, "copy"), watchdog.stage("copy"):
                     hook, inputs = self._write_copy(cand_id, inputs)
-            except (RankError, PromptError, ComplianceError) as exc:
+            except (RankError, PromptError, ComplianceError, watchdog.WatchdogError) as exc:
                 self._render_failed(cand_id, exc)
                 return
             except costs.SourceSpendCapReached as exc:  # skip it (it expires later); the source and its clips stay

@@ -67,7 +67,7 @@ TOOL_DESCRIPTION = "Record one score item for every candidate id in the request.
 MAX_TOKENS = 6000
 REASON_MAX = 200
 MAX_OVERLAP = 0.5
-END_SLACK_S = 0.5  # an end this much past payoff + post_roll is trimmed
+END_SNAP_S = 0.4  # the end moves to the end of the word it falls in only if that is this close
 DROP_ORDER = ("brief", "skip_rules", "content", "window", "min_score")
 
 
@@ -80,6 +80,7 @@ class _ItemBase(BaseModel):
     has_payoff: bool
     start_s: float = Field(ge=0)
     end_s: float = Field(ge=0)
+    first_beat_s: float = Field(ge=0)
     payoff_s: float = Field(ge=0)
     brief_ok: bool
     skip_flags: list[str]
@@ -109,6 +110,10 @@ def moment_tool_schema(profile: MomentProfile) -> dict[str, Any]:
             "has_payoff": {"type": "boolean"},
             "start_s": {"type": "number", "description": "Absolute seconds."},
             "end_s": {"type": "number", "description": "Absolute seconds."},
+            "first_beat_s": {
+                "type": "number",
+                "description": "Absolute seconds: the first beat a stranger must see for the payoff to land.",
+            },
             "payoff_s": {"type": "number", "description": "Absolute seconds: when the payoff ends."},
             "brief_ok": {"type": "boolean"},
             "skip_flags": _enum_list([r.id for r in profile.skip_rules]),
@@ -325,10 +330,16 @@ def apply_window_rules(
     duration_s: float,
     events: Sequence[Event] = (),
 ) -> WindowDecision:
-    """The clip window on the global timeline (pure). The model's window is used when it lies inside the candidate
-    plus its context; a payoff past the end extends the end (never truncated); the tail ends at most `post_roll_s`
-    after the payoff; leading dead air is trimmed; then `min_s`..`max_s` on word edges. `too_long` when the moment
-    from the opening beat to the payoff cannot fit `max_s`."""
+    """The clip window on the global timeline (pure), in this order:
+
+    1. The model's window when it lies inside the candidate plus its context, else the candidate window.
+    2. End: exactly `post_roll_s` after the payoff (a payoff past the window extends it: never truncated), moved to
+       the end of the word it falls in only when that is within END_SNAP_S (else to that word's start).
+    3. Start: when the clip would run past `target_max_s`, it starts at the model's first beat (`first_beat_s`), so
+       only a moment that truly needs its setup runs longer.
+    4. At most `max_lead_silence_s` of dead air before the first word or visual event.
+    5. `min_s` (more setup from speech before, else more tail) and the `max_s` cap. `too_long` when the moment from
+       its first beat to the payoff cannot fit `max_s`: the candidate is dropped, never cut."""
     rules = profile.window
     notes: list[str] = []
     lo, hi = moment.start_s - rules.context_s - 1.0, moment.end_s + rules.context_s + 1.0
@@ -337,18 +348,22 @@ def apply_window_rules(
         start, end, used_model = moment.start_s, moment.end_s, False
         notes.append("model window outside the candidate's context; kept the candidate window")
     payoff = item.payoff_s if start < item.payoff_s <= hi else min(max(moment.payoff_s, start), end)
+    target_end = payoff + rules.post_roll_s
     if payoff > end:
-        end = payoff + rules.post_roll_s
         notes.append(f"extended to the payoff at {payoff:.1f}s")
-    elif end > payoff + rules.post_roll_s + END_SLACK_S:
-        end = payoff + rules.post_roll_s
-        notes.append("trimmed the tail after the payoff")
+    elif end > target_end + 0.3:
+        notes.append(f"ended {rules.post_roll_s:g}s after the payoff")
+    end = target_end
     w = _word_containing(words, end)
     if w is not None:
-        end = w.end_s
+        end = w.end_s if (w.end_s - end <= END_SNAP_S or w.start_s <= payoff) else w.start_s
     if duration_s > 0:
         end = min(end, duration_s)
-    too_long = end - start > rules.max_s + 1e-6 and payoff - start > rules.max_s - rules.post_roll_s
+    beat = item.first_beat_s
+    if end - start > rules.target_max_s + 1e-6 and start + 0.3 < beat < payoff - 1.0:
+        start = beat - 0.3
+        notes.append(f"started at the first beat ({beat:.1f}s)")
+    too_long = payoff - start > rules.max_s - rules.post_roll_s + 1e-6
     new_start = trim_lead(start, end, words, events, rules.max_lead_silence_s)
     if new_start > start + 0.05:
         notes.append(f"trimmed {new_start - start:.1f}s of dead air at the start")

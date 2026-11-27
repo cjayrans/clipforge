@@ -126,6 +126,7 @@ def moment_item(cid: str, start: float, end: float, **overrides: Any) -> dict[st
         "has_payoff": True,
         "start_s": start,
         "end_s": end,
+        "first_beat_s": start,
         "payoff_s": max(start, end - 1.0),
         "brief_ok": True,
         "skip_flags": [],
