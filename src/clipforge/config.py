@@ -223,6 +223,9 @@ class AppConfig(_Strict):
     models: ModelsConfig
     prices: dict[str, Price]
     monthly_api_cap_usd: float = Field(ge=0)
+    # moments-v2: spend guard per source (download -> rank of one VOD), and free disk needed before a download.
+    per_source_cap_usd: float = Field(default=1.50, gt=0)
+    min_free_gb: float = Field(default=15.0, ge=0)
     campaign_filter: CampaignFilter
     youtube: YoutubeConfig
     retention: RetentionConfig

@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
@@ -277,6 +277,10 @@ class CampaignIn(BaseModel):
     max_source_minutes: int | None = Field(
         default=None, ge=1, description="Download only the first N minutes of a stream source (Twitch)."
     )
+    # Added for moments-v2: propose new recent VODs of `stream_channels` in Telegram (the operator taps Add to register
+    # one; nothing is registered automatically). `recent_vod_days` comes from the brief's "recent VODs" rule.
+    auto_propose_vods: bool = False
+    recent_vod_days: int | None = Field(default=None, ge=1, le=60)
     # Added for moment selection (docs/research/clipping-gta6-moment-types.md): the name of a file in
     # config/moment_profiles/ (archetypes, weights, gates, window rules). None keeps the transcript-window ranker.
     moment_profile: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -291,6 +295,14 @@ class CampaignIn(BaseModel):
     def _layout_fits_content(self) -> CampaignIn:
         if self.content_kind == "talk" and self.layout == "stacked":
             raise ValueError("layout 'stacked' needs game footage with a facecam (content_kind 'game')")
+        return self
+
+    @model_validator(mode="after")
+    def _vod_proposals_need_channels(self) -> CampaignIn:
+        if self.auto_propose_vods and not (
+            self.allow_stream_download and self.stream_channels and self.recent_vod_days
+        ):
+            raise ValueError("auto_propose_vods needs allow_stream_download, stream_channels and recent_vod_days")
         return self
 
     @model_validator(mode="before")
@@ -454,25 +466,39 @@ class GateResult(BaseModel):
     detail: str = ""
 
 
+FoundBy = Literal["content", "signals", "both"]
+
+
 class MomentScore(BaseModel):
     """Added for moment selection: how the moment ranker judged a candidate (stored per candidate for calibration).
 
-    The four scores are 0-10; `weighted` is the profile-weighted sum on a 0-100 scale after skip-rule penalties.
-    `review_flags` are content flags (e.g. sexual, graphic) shown on the Telegram preview: never an auto-reject.
+    `scores` maps each rubric criterion of the profile (e.g. hook, arc, arousal, sendability, clarity, density) to
+    0-10; `weighted` is the profile-weighted sum on a 0-100 scale after skip-rule penalties. `review_flags` are content
+    flags (e.g. sexual, graphic) shown on the Telegram preview: never an auto-reject.
+    moments-v2: `found_by` says which finder proposed the candidate (the content pass over the transcript, the cheap
+    audio/transcript signals, or both); `vision` holds the keyframe check result when one ran.
     """
 
     profile: str
     weights_version: str
     archetype: str
-    reaction: int = Field(ge=0, le=10)
-    event: int = Field(ge=0, le=10)
-    setup: int = Field(ge=0, le=10)
-    absurdity: int = Field(ge=0, le=10)
+    scores: dict[str, int] = Field(default_factory=dict)
     weighted: float = Field(ge=0, le=100)
     reason: str = Field(default="", max_length=300)
     skip_flags: list[str] = Field(default_factory=list)
     review_flags: list[str] = Field(default_factory=list)
     gates: list[GateResult] = Field(default_factory=list)
+    found_by: FoundBy | None = None
+    content_confidence: float | None = Field(default=None, ge=0, le=1)
+    vision: dict[str, Any] | None = None
+
+    @field_validator("scores")
+    @classmethod
+    def _score_range(cls, v: dict[str, int]) -> dict[str, int]:
+        for key, value in v.items():
+            if not 0 <= value <= 10:
+                raise ValueError(f"score {key} must be 0-10, got {value}")
+        return v
 
 
 class Candidate(BaseModel):

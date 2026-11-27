@@ -1,9 +1,11 @@
 """Moment profiles: everything niche-specific about moment selection, as data (config/moment_profiles/<name>.yaml).
 
-A campaign opts in with `"moment_profile": "<name>"` in its JSON. The code in rank/moments.py, rank/signals.py and
-rank/moment_score.py is generic; archetypes, weights, gate thresholds, window rules, trigger/reaction word lists,
-skip rules (e.g. a publisher's cutscene policy) and content flags all come from the profile. Changing weights means
-bumping `weights_version`, which is stored on every candidate so calibration can compare versions.
+A campaign opts in with `"moment_profile": "<name>"` in its JSON. The code in rank/ is generic; the moment catalogue
+(archetypes with examples and signs: examples of what good looks like, never a list of allowed moments), the reject
+examples, the scoring rubric and its weights, gate thresholds, window rules, the content pass and vision settings,
+trigger/reaction word lists, skip rules (e.g. a publisher's cutscene policy) and content flags all come from the
+profile. Changing the rubric, weights or catalogue means bumping `weights_version`, which is stored on every candidate
+so calibration can compare versions.
 """
 
 from __future__ import annotations
@@ -50,41 +52,76 @@ class SkipRule(Rule):
     penalty: float = Field(default=0.5, gt=0, le=1, description="Score multiplier when action is penalize.")
 
 
-class Weights(_Strict):
-    reaction: float = Field(ge=0)
-    event: float = Field(ge=0)
-    setup: float = Field(ge=0)
-    absurdity: float = Field(ge=0)
+class Archetype(Rule):
+    """One catalogue entry: an example moment type with concrete examples and the signs that it is happening."""
 
-    @model_validator(mode="after")
-    def _sum(self) -> Weights:
-        total = self.reaction + self.event + self.setup + self.absurdity
-        if abs(total - 1.0) > 1e-6:
-            raise ValueError(f"weights must sum to 1.0, got {total:.3f}")
-        return self
+    examples: list[str] = Field(default_factory=list, max_length=12)
+    signs: list[str] = Field(default_factory=list, max_length=12)
+    copy_hint: str = Field(default="", max_length=200, description="Extra guidance for the copywriter.")
+
+
+class Criterion(Rule):
+    """One rubric criterion, scored 0-10 by the ranker."""
+
+    description: str = Field(min_length=1, max_length=600)
 
 
 class WindowRules(_Strict):
-    """Clip window: start pre_roll before the trigger, end post_roll after the payoff, length within bounds."""
+    """Clip window: open on the most interesting beat a stranger can follow (no dead air), end right after the payoff.
 
-    pre_roll_min_s: float = Field(ge=0)
-    pre_roll_s: float = Field(ge=0)
-    pre_roll_max_s: float = Field(ge=0)
-    post_roll_s: float = Field(ge=0, le=10)
+    `min_s`/`max_s` are hard bounds; `target_min_s`..`target_max_s` is what the ranker aims for. A moment that runs
+    past its proposed window is extended up to `max_s`, never truncated (rank/moment_score.apply_window_rules)."""
+
     min_s: float
+    target_min_s: float
     target_max_s: float
     max_s: float
+    post_roll_s: float = Field(ge=0, le=10, description="At most this much after the payoff.")
+    max_lead_silence_s: float = Field(ge=0, le=5, description="At most this much silence before the first beat.")
+    context_s: float = Field(ge=0, le=120, description="Transcript shown either side of a candidate.")
     chain_gap_s: float = Field(gt=0, le=15, description="Reactions closer than this extend the same payoff.")
 
     @model_validator(mode="after")
     def _bounds(self) -> WindowRules:
-        if not self.pre_roll_min_s <= self.pre_roll_s <= self.pre_roll_max_s:
-            raise ValueError("need pre_roll_min_s <= pre_roll_s <= pre_roll_max_s")
-        if not compliance.MIN_CLIP_S <= self.min_s <= self.target_max_s <= self.max_s <= compliance.MAX_CLIP_S:
-            raise ValueError(
-                f"need {compliance.MIN_CLIP_S} <= min_s <= target_max_s <= max_s <= {compliance.MAX_CLIP_S}"
-            )
+        lo, hi = compliance.MIN_CLIP_S, compliance.MAX_CLIP_S
+        if not lo <= self.min_s <= self.target_min_s <= self.target_max_s <= self.max_s <= hi:
+            raise ValueError(f"need {lo} <= min_s <= target_min_s <= target_max_s <= max_s <= {hi}")
         return self
+
+
+class ContentPassRules(_Strict):
+    """Content-first moment finding: the whole transcript in overlapping segments (rank/content_pass.py)."""
+
+    segment_s: float = Field(ge=120, le=3600)
+    overlap_s: float = Field(ge=30, le=900)
+    max_proposals_per_segment: int = Field(gt=0, le=40)
+    edge_s: float = Field(default=5.0, ge=0, le=60, description="A proposal this close to a segment edge is 'edge'.")
+
+    @model_validator(mode="after")
+    def _overlap(self) -> ContentPassRules:
+        if self.overlap_s * 2 > self.segment_s:
+            raise ValueError("content_pass overlap_s must be at most half of segment_s")
+        return self
+
+
+class VisionRules(_Strict):
+    """Keyframe check on the shortlist (rank/vision.py)."""
+
+    enabled: bool = True
+    shortlist: int = Field(default=12, ge=0, le=40, description="Best candidates by transcript score that get it.")
+    max_frames: int = Field(default=8, ge=1, le=20)
+    frame_every_s: float = Field(default=2.5, gt=0, le=10)
+    frame_width: int = Field(default=768, ge=256, le=1568)
+    facecam_crop: bool = True
+    jpeg_quality: int = Field(default=80, ge=30, le=95)
+    # What the frames can add (profile rule ids, all optional): a skip rule when the frames show a menu, loading
+    # screen or just chatting with no event; when most frames are a cutscene with no visible reaction (reject) or
+    # with one (penalize); when they show an ending or story reveal; a review flag for graphic or sexual frames.
+    no_event_skip: str | None = None
+    cutscene_skip: str | None = None
+    cutscene_part_skip: str | None = None
+    spoiler_skip: str | None = None
+    graphic_review: str | None = None
 
 
 class SignalRules(_Strict):
@@ -125,10 +162,10 @@ class Lexicon(_Strict):
 
 
 class GateRules(_Strict):
-    reaction_within_s: float = Field(gt=0, le=10, description="A reaction must follow the trigger within this.")
+    reaction_within_s: float = Field(gt=0, le=10, description="Signal pairing: a reaction this soon after a trigger.")
     reaction_lead_s: float = Field(ge=0, le=2, description="A reaction may start this much before the trigger.")
-    min_audio_std_db: float = Field(ge=0, description="Below this loudness spread a window needs a visual event.")
-    max_candidates: int = Field(gt=0, le=200, description="Candidates sent to the ranker per source.")
+    min_audio_std_db: float = Field(ge=0, description="Loudness spread recorded as evidence (never a gate).")
+    max_candidates: int = Field(gt=0, le=200, description="Merged candidates sent to the ranker per source.")
     min_score: float = Field(ge=0, le=100, description="Weighted score (0-100) a candidate needs to be kept.")
 
 
@@ -137,9 +174,13 @@ class MomentProfile(_Strict):
     weights_version: str = Field(min_length=1, max_length=64)
     description: str = ""
     ranker_notes: str = Field(default="", max_length=2000, description="Niche guidance added to the ranker prompt.")
-    archetypes: list[Rule] = Field(min_length=1)
-    weights: Weights
+    archetypes: list[Archetype] = Field(min_length=1)
+    reject_examples: list[str] = Field(default_factory=list, max_length=30)
+    rubric: list[Criterion] = Field(min_length=1, max_length=10)
+    weights: dict[str, float]
     window: WindowRules
+    content_pass: ContentPassRules
+    vision: VisionRules = Field(default_factory=VisionRules)
     signals: SignalRules
     lexicon: Lexicon
     gates: GateRules
@@ -150,6 +191,7 @@ class MomentProfile(_Strict):
     def _unique_ids(self) -> MomentProfile:
         for kind, rules in (
             ("archetypes", self.archetypes),
+            ("rubric", self.rubric),
             ("skip_rules", self.skip_rules),
             ("review_flags", self.review_flags),
         ):
@@ -158,7 +200,26 @@ class MomentProfile(_Strict):
                 raise ValueError(f"{kind} ids must be unique")
         if "other" not in {a.id for a in self.archetypes}:
             raise ValueError("archetypes must include 'other'")
+        skip_ids = {r.id for r in self.skip_rules}
+        v = self.vision
+        for name in ("no_event_skip", "cutscene_skip", "cutscene_part_skip", "spoiler_skip"):
+            value = getattr(v, name)
+            if value is not None and value not in skip_ids:
+                raise ValueError(f"vision.{name} {value!r} is not a skip rule id")
+        if v.graphic_review is not None and v.graphic_review not in {r.id for r in self.review_flags}:
+            raise ValueError(f"vision.graphic_review {v.graphic_review!r} is not a review flag id")
+        if set(self.weights) != set(self.rubric_ids):
+            raise ValueError(f"weights must have exactly the rubric ids {self.rubric_ids}")
+        if any(w < 0 for w in self.weights.values()):
+            raise ValueError("weights must be >= 0")
+        total = sum(self.weights.values())
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"weights must sum to 1.0, got {total:.3f}")
         return self
+
+    @property
+    def rubric_ids(self) -> list[str]:
+        return [c.id for c in self.rubric]
 
     @property
     def archetype_ids(self) -> list[str]:

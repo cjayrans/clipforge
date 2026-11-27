@@ -19,6 +19,7 @@ from clipforge.db import CandidateRow, ClipRow, EventRow, SourceRow, session_sco
 from clipforge.pipeline import PipelineDeps, _candidate_model, run_once
 from clipforge.rank.media_signals import MediaSignals
 from clipforge.rank.profile import SignalRules
+from clipforge.rank.vision import Frame
 from clipforge.review.views import preview_caption
 from clipforge.schemas import ClipState, SourceStatus
 from tests.rank.anthropic_mock import FakeAnthropic
@@ -68,6 +69,10 @@ def good_signals() -> Signals:
     )
 
 
+def fake_frames(path: Path, windows):
+    return lambda start, end, times: [Frame(t, b"\xff\xd8jpeg") for t in times]
+
+
 def test_moment_campaign_stores_calibration_fields(
     pipe_settings: Settings,
     db: sessionmaker[Session],
@@ -77,37 +82,49 @@ def test_moment_campaign_stores_calibration_fields(
 ) -> None:
     signals = good_signals()
     add_campaign(db, pipe_settings, moment_profile="gta6-streamer", copy_style_notes="Meme tone.")
-    report = run_once(pipe_settings, deps=replace(deps, moment_signals=signals))
+    report = run_once(pipe_settings, deps=replace(deps, moment_signals=signals, vision_frames=fake_frames))
     assert report.candidates_created == 2
     assert len(signals.calls) == 1
     assert signals.calls[0][1].loud_z == 2.0
     tools = [r["tools"][0]["name"] for r in anthropic.requests if r.get("tools")]
-    assert tools == ["score_moments"]  # the transcript-window scorer is not used for this campaign
+    # content pass, rubric scoring, keyframe check; the transcript-window scorer is not used for this campaign
+    assert tools[:2] == ["propose_moments", "score_moments"]
+    assert set(tools[2:]) == {"judge_frames"}
+    assert report.copy_written == report.rendered  # copy only for the candidates picked to render
     with session_scope(db) as s:
         rows = s.scalars(select(CandidateRow).order_by(CandidateRow.id)).all()
         assert [r.archetype for r in rows] == ["blunder", "blunder"]
         for r in rows:
             assert r.moment_profile == "gta6-streamer"
-            assert r.weights_version == "gta6-streamer-v1"
-            assert (r.score_reaction, r.score_event, r.score_setup, r.score_absurdity) == (8, 7, 7, 8)
-            assert r.score == round(10 * (0.35 * 8 + 0.25 * 7 + 0.25 * 7 + 0.15 * 8))
+            assert r.weights_version == "gta6-streamer-v2"
+            assert (r.score_hook, r.score_arc, r.score_arousal) == (8, 7, 8)
+            assert (r.score_sendability, r.score_clarity, r.score_density) == (7, 7, 6)
+            assert r.scores_json == {"hook": 8, "arc": 7, "arousal": 8, "sendability": 7, "clarity": 7, "density": 6}
+            assert r.score_reaction is None  # v1 columns stay for history only
+            assert r.score == round(10 * (0.2 * 8 + 0.2 * 7 + 0.2 * 8 + 0.2 * 7 + 0.1 * 7 + 0.1 * 6))
+            assert r.found_by == "signals"
+            assert r.vision_json is not None
+            assert r.vision_json["scene"] == "gameplay"
             names = [g["name"] for g in r.gate_results_json]
-            assert names == ["trigger_reaction", "dead_footage", "brief", "skip_rules", "min_score"]
+            assert names == ["signal_pair", "audio_evidence", "brief", "skip_rules", "content", "window", "min_score"]
             assert r.skip_flags == []
             assert r.review_flags == []
-            assert r.prompt_version == "score_moments@1+clip_copy@3"
+            assert r.prompt_version == "propose_moments@1+score_moments@2+judge_frames@1+clip_copy@3"
             assert 12 <= r.end_s - r.start_s <= 45
+            assert r.hook  # written right before rendering
             model = _candidate_model(r)  # what a "New hook" re-render hands the copywriter
             assert model.moment is not None
             assert model.moment.reason.startswith("Sells his car")
         src = s.scalars(select(SourceRow)).one()
         assert src.status is SourceStatus.RANKED
         ranked = s.scalars(select(EventRow).where(EventRow.entity == "source", EventRow.to_state == "ranked")).one()
-        assert "moments (gta6-streamer-v1)" in (ranked.detail or "")
+        assert "moments (gta6-streamer-v2)" in (ranked.detail or "")
         clip = s.scalars(select(ClipRow).order_by(ClipRow.id)).first()
         assert clip is not None
         assert clip.state is ClipState.PENDING_REVIEW
-        assert "Moment: blunder | reaction 8" in preview_caption(s, pipe_settings, clip)
+        caption = preview_caption(s, pipe_settings, clip)
+        assert "Moment: blunder (found by signals) | hook 8, arc 7, arousal 8, send 7, clarity 7, density 6" in caption
+        assert "Frames: gameplay; event yes, payoff yes, reaction yes" in caption
 
 
 def test_failed_media_signals_still_rank_on_the_transcript(
@@ -121,9 +138,9 @@ def test_failed_media_signals_still_rank_on_the_transcript(
     with session_scope(db) as s:
         row = s.scalars(select(CandidateRow)).first()
         assert row is not None
-        dead = next(g for g in row.gate_results_json if g["name"] == "dead_footage")
-        assert dead["passed"] is None
-        assert "no loudness data" in dead["detail"]
+        evidence = next(g for g in row.gate_results_json if g["name"] == "audio_evidence")
+        assert evidence["passed"] is None
+        assert "no loudness data" in evidence["detail"]
 
 
 def test_missing_profile_alerts_and_leaves_the_source_for_next_night(
@@ -227,7 +244,7 @@ def test_rerank_adds_new_candidates_without_touching_approved_clips(
         cands = s.scalars(select(CandidateRow).order_by(CandidateRow.id)).all()
         assert len(cands) == 2 + report.candidates_created  # the old candidates stay as history
         for new in cands[2:]:
-            assert new.weights_version == "gta6-streamer-v1"
+            assert new.weights_version == "gta6-streamer-v2"
             assert not (new.start_s < used_window[1] and used_window[0] < new.end_s)
         after = {r.id: (r.state, r.path) for r in s.scalars(select(ClipRow)) if r.id in before}
         assert after == {**before, approved_id: (ClipState.APPROVED, before[approved_id][1])}  # no clip changed

@@ -59,6 +59,8 @@ prices:                      # USD; check current pricing pages monthly
   whisper-large-v3-turbo: { per_audio_hour: 0.04 }
 
 monthly_api_cap_usd: 15
+per_source_cap_usd: 1.50     # one VOD (transcribe + content pass + scoring + vision + copy) stops at this
+min_free_gb: 15              # a download needs the VOD's estimated size plus this much free disk
 
 campaign_filter:             # Used by `cf campaign check` and the Claude chat prompt
   min_approval_rate_pct: 40          # only applied when the campaign shows one

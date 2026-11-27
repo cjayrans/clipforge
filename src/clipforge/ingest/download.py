@@ -29,6 +29,7 @@ import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
@@ -41,7 +42,7 @@ from clipforge import compliance
 from clipforge.compliance import ComplianceError
 from clipforge.config import Settings
 from clipforge.db import CampaignRow, SourceRow, utcnow
-from clipforge.ingest import alerts, media
+from clipforge.ingest import alerts, disk, media
 from clipforge.ingest.models import campaign_from_row, set_source_status
 from clipforge.schemas import CampaignStatus, SourceHost, SourceStatus
 
@@ -61,6 +62,10 @@ _REDIRECT_REFUSED: frozenset[SourceHost] = frozenset({SourceHost.YOUTUBE, Source
 
 class DownloadError(RuntimeError):
     """A download failed for a reason that is not a compliance refusal."""
+
+
+class DiskSpaceError(DownloadError):
+    """Not enough free disk for the download (ingest/disk.py); tried again next night."""
 
 
 class _RetryableStatus(DownloadError):
@@ -274,6 +279,8 @@ def _fetch(
 ) -> tuple[Path, str]:
     """Download with the handler for `host`; return (final path, sha256)."""
     stem = str(source.id)
+    if host in (SourceHost.DIRECT, SourceHost.DROPBOX, SourceHost.GDRIVE):  # Twitch checks the VOD's own size below
+        disk.check_free(out_dir, None, settings.app.min_free_gb)
     if host is SourceHost.DIRECT:
         dest = out_dir / f"{stem}{media_suffix(source.url)}"
         return dest, http_download(source.url, dest)
@@ -293,6 +300,10 @@ def _fetch(
         # assert_registered_source already required allow_stream_download; check again at the point of action.
         if not campaign.allow_stream_download:
             raise ComplianceError(1, f"campaign {campaign.id} does not allow stream downloads")
+
+        def disk_check(meta: dict[str, Any]) -> None:
+            disk.check_free(out_dir, disk.estimate_bytes(meta), settings.app.min_free_gb)
+
         got = twitch.download(
             source.url,
             out_dir,
@@ -300,6 +311,7 @@ def _fetch(
             ytdl_factory=ytdl_factory,
             channels=campaign.stream_channels,
             max_minutes=campaign.max_source_minutes,
+            disk_check=disk_check,
         )
         return got, media.sha256_file(got)
     if host is SourceHost.INBOX:

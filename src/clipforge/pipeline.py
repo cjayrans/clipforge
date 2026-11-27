@@ -11,10 +11,16 @@ How a nightly run works (docs/PRD.md §4.2, ARCHITECTURE §4):
 2. `ingest.inbox.scan_inbox` registers files dropped in `inbox/<slug>/`.
 3. Sweeps: expire unpublished clips of drained/ended campaigns; recover clips a crashed re-render left in RENDERED.
 4. Render candidates left over from earlier runs (costs no API money), best first.
-5. Sources of active campaigns (priority, then oldest), at most `pipeline.max_sources_per_night`: download, then
-   transcribe, then rank (each paid stage after `costs.guard()`), then render the new candidates.
-6. Stop early once `pipeline.nightly_candidate_target` clips passed QA *in this run*; candidates not rendered stay
-   CANDIDATE for the next night.
+5. Phase A (moments-v2): sources of active campaigns (priority, then oldest), at most
+   `pipeline.max_sources_per_night`: download (after a disk-space check), transcribe, rank (each paid stage after
+   `costs.guard()`, inside `costs.for_source` so the per-source cap applies and cost rows name the source). Moment
+   candidates are stored without copy.
+6. Candidates left unrendered for `CANDIDATE_TTL` since ranking expire (their footage can then be deleted).
+7. Phase B: every CANDIDATE across sources competes (campaign priority, then score); the best are rendered until
+   `pipeline.nightly_candidate_target` clips passed QA *in this run*. Copy (Sonnet) is written right before a
+   candidate renders, so only the clips that go to review are paid for. The rest stay CANDIDATE for the next night.
+8. Footage of a source with nothing pending (no clip awaiting review/approval/publishing, no unrendered candidate) is
+   deleted (`ingest.purge.purge_if_done`).
 
 Database discipline:
 - Every step runs in its own short `session_scope`. Nothing holds a write transaction while a paid call, a download
@@ -78,6 +84,7 @@ from clipforge.ingest import media
 from clipforge.ingest.download import DownloadError, GDriveClient, download_source
 from clipforge.ingest.inbox import scan_inbox
 from clipforge.ingest.models import clip_windows, facecam_from_row, set_source_status, store_facecam
+from clipforge.ingest.purge import purge_if_done
 from clipforge.publish.dispatcher import expire_campaign_clips, release_clip
 from clipforge.publish.queries import campaign_model, lineage
 from clipforge.qa.checks import FaceCheckFn, default_face_check, qa_clip
@@ -87,10 +94,11 @@ from clipforge.rank.claude_client import ClaudeClient, RankError
 from clipforge.rank.copy import RankResult, rank_source, write_copy
 from clipforge.rank.media_signals import MediaSignals
 from clipforge.rank.media_signals import extract as extract_media_signals
-from clipforge.rank.moment_score import overlaps_any, rank_moments
+from clipforge.rank.moment_score import moment_note, overlaps_any, rank_moments
 from clipforge.rank.profile import MomentProfile, ProfileError, SignalRules, load_profile
 from clipforge.rank.prompts import Fewshot, PromptError, load_fewshots
 from clipforge.rank.select import shorter_range, text_between
+from clipforge.rank.vision import FramesFn, source_frames
 from clipforge.render.assets import AssetNotFoundError
 from clipforge.render.clip import ClipRequest, render_candidate
 from clipforge.render.encode import RenderError
@@ -129,6 +137,9 @@ RENDER_ERRORS: tuple[type[Exception], ...] = (
 RENDER_RETRIES = 1  # one more try next night, then the candidate expires
 RERENDER_FLAG = "rerender:"  # + clip id; set while a New hook / Shorter re-render runs
 STRANDED_AFTER = timedelta(hours=1)  # a clip left RENDERED longer than this by a re-render is recovered
+CANDIDATE_TTL = timedelta(days=3)  # an unrendered candidate expires this long after ranking (moments-v2)
+RUBRIC_COLUMNS = ("hook", "arc", "arousal", "sendability", "clarity", "density")  # CandidateRow.score_<id>
+V1_COLUMNS = ("reaction", "event", "setup", "absurdity")  # weights_version gta6-streamer-v1
 
 
 # --------------------------------------------------------------------------------------------------
@@ -159,6 +170,8 @@ class PipelineDeps:
     # once per source, sampled inside its clip windows (render/facecam.py)
     facecam_fn: Callable[[Path, list[tuple[float, float]]], FacecamDetection | None] = default_detect
     qa_face_check: FaceCheckFn = default_face_check  # stacked clips: a face in the rendered facecam panel
+    # moments-v2 keyframe check: (source path, shortlist windows) -> FramesFn; None reads JPEGs with ffmpeg
+    vision_frames: Callable[[Path, Sequence[tuple[float, float]]], FramesFn | None] | None = None
 
 
 @dataclass
@@ -176,8 +189,12 @@ class RunReport:
     rendered: int = 0
     ready: int = 0  # clips that passed QA in this run (PENDING_REVIEW)
     qa_failed: int = 0
+    copy_written: int = 0
+    expired_stale: int = 0
+    purged: int = 0
     stopped_early: bool = False
     problems: list[str] = field(default_factory=list)
+    source_stats: list[str] = field(default_factory=list)  # per source: download size, disk, stage times
 
     def summary(self) -> str:
         lines = [
@@ -186,8 +203,10 @@ class RunReport:
             f"sources {self.sources_seen}: downloaded {self.downloaded}, transcribed {self.transcribed}, "
             f"ranked {self.ranked}; candidates {self.candidates_created}; rendered {self.rendered}, "
             f"QA failed {self.qa_failed}",
-            f"inbox {self.inbox_registered} new; expired {self.expired}; recovered {self.recovered}",
+            f"inbox {self.inbox_registered} new; expired {self.expired} (+{self.expired_stale} stale candidates); "
+            f"recovered {self.recovered}; copy written {self.copy_written}; footage deleted {self.purged}",
         ]
+        lines.extend(self.source_stats[:10])
         if self.paused:
             lines.append(f"PAUSED: {self.paused}")
         lines.extend(f"problem: {p}" for p in self.problems[:20])
@@ -261,19 +280,28 @@ def moment_from_row(row: CandidateRow) -> MomentScore | None:
     reason = row.reasons
     if reason.startswith(f"[{row.archetype}] "):
         reason = reason[len(row.archetype) + 3 :]
+    scores: dict[str, int] = {}
+    if isinstance(row.scores_json, dict):
+        scores = {str(k): int(v) for k, v in row.scores_json.items() if isinstance(v, int | float)}
+    else:  # weights_version v1 rows: the four original scores
+        for key in V1_COLUMNS:
+            value = getattr(row, f"score_{key}")
+            if value is not None:
+                scores[key] = int(value)
+    found_by = row.found_by if row.found_by in ("content", "signals", "both") else None
     return MomentScore(
         profile=row.moment_profile,
         weights_version=row.weights_version,
         archetype=row.archetype,
-        reaction=row.score_reaction or 0,
-        event=row.score_event or 0,
-        setup=row.score_setup or 0,
-        absurdity=row.score_absurdity or 0,
+        scores={k: min(max(v, 0), 10) for k, v in scores.items()},
         weighted=float(min(max(row.score, 0), 100)),
         reason=reason[:300],
         skip_flags=[str(x) for x in row.skip_flags or []],
         review_flags=[str(x) for x in row.review_flags or []],
         gates=[GateResult.model_validate(g) for g in row.gate_results_json or [] if isinstance(g, dict)],
+        found_by=found_by,  # type: ignore[arg-type]
+        content_confidence=row.content_confidence,
+        vision=row.vision_json if isinstance(row.vision_json, dict) else None,
     )
 
 
@@ -281,18 +309,21 @@ def moment_columns(moment: MomentScore | None) -> dict[str, Any]:
     """CandidateRow column values for a moment judgement (all None without one)."""
     if moment is None:
         return {}
-    return {
+    cols: dict[str, Any] = {
         "moment_profile": moment.profile,
         "weights_version": moment.weights_version,
         "archetype": moment.archetype,
-        "score_reaction": moment.reaction,
-        "score_event": moment.event,
-        "score_setup": moment.setup,
-        "score_absurdity": moment.absurdity,
+        "scores_json": dict(moment.scores),
+        "found_by": moment.found_by,
+        "content_confidence": moment.content_confidence,
+        "vision_json": moment.vision,
         "gate_results_json": [g.model_dump(mode="json") for g in moment.gates],
         "skip_flags": list(moment.skip_flags),
         "review_flags": list(moment.review_flags),
     }
+    for key in (*RUBRIC_COLUMNS, *V1_COLUMNS):
+        cols[f"score_{key}"] = moment.scores.get(key)
+    return cols
 
 
 def _candidate_model(row: CandidateRow) -> Candidate:
@@ -365,13 +396,18 @@ class _RenderInputs:
 
 
 def resolve_facecam(
-    settings: Settings, factory: sessionmaker[Session], deps: PipelineDeps, source_id: int, campaign: Campaign
+    settings: Settings,
+    factory: sessionmaker[Session],
+    deps: PipelineDeps,
+    source_id: int,
+    campaign: Campaign,
+    windows: Sequence[tuple[float, float]] | None = None,
 ) -> FacecamSpec | None:
     """The facecam a game clip of this source is laid out with, or None (crop/fit only).
 
     Order: the campaign's manual `facecam_box`; the detection stored on the source (current detector version); a new
-    detection sampled inside the source's clip windows (no transaction held while it runs), stored with an events row
-    whatever it finds. A detection that
+    detection sampled inside the source's clip windows, or `windows` when given (the keyframe check passes its
+    shortlist; no transaction held while it runs), stored with an events row whatever it finds. A detection that
     could not run (no mediapipe, unreadable media) is not stored and is tried again next time."""
     if campaign.content_kind != "game" or campaign.layout in ("crop", "fit"):
         return None
@@ -383,10 +419,11 @@ def resolve_facecam(
             return None
         stored = facecam_from_row(src)
         path = Path(src.local_path)
-        windows = clip_windows(s, source_id)
+        if windows is None:
+            windows = clip_windows(s, source_id)
     if stored is None:
         started = time.monotonic()
-        detection = deps.facecam_fn(path, windows)
+        detection = deps.facecam_fn(path, list(windows))
         if detection is None:
             return None
         with session_scope(factory) as s:
@@ -505,6 +542,8 @@ class Pipeline:
             return fn()
         except costs.SpendCapReached:
             raise
+        except costs.SourceSpendCapReached as exc:
+            self._source_capped(exc)
         except _StageFailed as exc:
             self._problem(f"{stage} {entity}: {exc}")
         except Exception as exc:
@@ -514,6 +553,16 @@ class Pipeline:
             with session_scope(self.factory) as s:
                 alerts.raise_alert(s, alerts.PIPELINE_STAGE_FAILED, entity, message)
         return None
+
+    def _source_capped(self, exc: costs.SourceSpendCapReached) -> None:
+        """A source reached `per_source_cap_usd`: it fails (raise the cap, then `cf source retry`); the run goes on."""
+        message = f"source {exc.source_id} stopped: {exc}. Raise per_source_cap_usd, then `cf source retry`."
+        self._problem(message)
+        with session_scope(self.factory) as s:
+            src = s.get(SourceRow, exc.source_id)
+            if src is not None and src.status not in (SourceStatus.FAILED, SourceStatus.PURGED):
+                set_source_status(s, src, SourceStatus.FAILED, fail_reason="source_spend_cap", detail=str(exc))
+            alerts.raise_alert(s, alerts.SOURCE_SPEND_CAP, exc.source_id, message)
 
     def run(self) -> RunReport:
         try:
@@ -526,17 +575,41 @@ class Pipeline:
         self._isolated("sweep", "campaigns", self._sweep_inactive)
         self._isolated("sweep", "stranded", self._recover_stranded)
         try:
-            self._render_pending()
-            for source_id in self._work_queue():
-                if self.target_reached:
-                    self.report.stopped_early = True
-                    break
+            for source_id in self._work_queue():  # Phase A: rank every source of the night first
                 self.report.sources_seen += 1
                 self._process_source(source_id)
+            self._isolated("sweep", "stale candidates", self._expire_stale)
+            self._render_pending()  # Phase B: the best candidates across sources
         except costs.SpendCapReached as exc:
             self._pause(exc)
+        self._isolated("purge", "done sources", self._purge_done)
         self._finish()
         return self.report
+
+    def _expire_stale(self) -> None:
+        cutoff = self.deps.clock() - CANDIDATE_TTL
+        with session_scope(self.factory) as s:
+            rows = s.scalars(
+                select(CandidateRow).where(CandidateRow.state == ClipState.CANDIDATE, CandidateRow.created_at < cutoff)
+            ).all()
+            for cand in rows:
+                transition(s, cand, ClipState.EXPIRED, detail=f"not rendered within {CANDIDATE_TTL.days} days")
+                self.report.expired_stale += 1
+
+    def _purge_done(self) -> None:
+        with session_scope(self.factory) as s:
+            ids = list(
+                s.scalars(
+                    select(SourceRow.id).where(
+                        SourceRow.status.in_([SourceStatus.RANKED, SourceStatus.FAILED]),
+                        SourceRow.local_path.is_not(None),
+                    )
+                )
+            )
+        for source_id in ids:
+            with session_scope(self.factory) as s:
+                if purge_if_done(s, self.settings, source_id, now=self.deps.clock()):
+                    self.report.purged += 1
 
     def _finish(self) -> None:
         summary = self.report.summary()
@@ -598,13 +671,40 @@ class Pipeline:
             (SourceStatus.DOWNLOADED, "transcribe", self._transcribe),
             (SourceStatus.TRANSCRIBED, "rank", self._rank),
         ]
+        timings: list[str] = []
         for status, name, fn in stages:
             if self._source_status(source_id) is not status:
                 continue
-            self._isolated(name, f"source {source_id}", lambda fn=fn: fn(source_id))
+            started = time.monotonic()
+            with costs.for_source(source_id, name):
+                self._isolated(name, f"source {source_id}", lambda fn=fn: fn(source_id))
+            timings.append(f"{name} {time.monotonic() - started:.0f}s")
             if self._source_status(source_id) is status:
-                return  # the stage did not advance the source; it is retried next night
-        self._render_pending()
+                break  # the stage did not advance the source; it is retried next night
+        self._source_stats(source_id, timings)
+
+    def _source_stats(self, source_id: int, timings: list[str]) -> None:
+        """One report line per source: file size, free disk, stage wall times, spend so far."""
+        with session_scope(self.factory) as s:
+            src = s.get(SourceRow, source_id)
+            path = Path(src.local_path) if src is not None and src.local_path else None
+            spent = costs.source_spend(s, source_id)
+            duration = src.duration_s if src is not None else None
+        size = path.stat().st_size if path is not None and path.is_file() else None
+        try:
+            free = shutil.disk_usage(self.settings.media_dir if self.settings.media_dir.exists() else Path.cwd()).free
+        except OSError:
+            free = None
+        parts = [f"source {source_id}:"]
+        if duration:
+            parts.append(f"{duration / 3600:.2f} h")
+        if size is not None:
+            parts.append(f"file {size / 1024**3:.2f} GB")
+        if free is not None:
+            parts.append(f"disk free {free / 1024**3:.1f} GB")
+        parts.append(", ".join(timings) or "no stage ran")
+        parts.append(f"spend ${spent:.3f}")
+        self.report.source_stats.append(" ".join(parts))
 
     def _download(self, source_id: int) -> None:
         with session_scope(self.factory) as s:
@@ -689,7 +789,7 @@ class Pipeline:
                 result = rank_source(transcript, campaign, account.platforms, client=self._claude, fewshots=fewshots)
             else:
                 result = self._rank_moments(
-                    transcript, campaign, account.platforms, profile, fewshots, local_path, used
+                    transcript, campaign, account.platforms, profile, fewshots, local_path, used, source_id
                 )
         except (RankError, PromptError, ComplianceError) as exc:
             with session_scope(self.factory) as s:
@@ -702,8 +802,7 @@ class Pipeline:
             src = s.get(SourceRow, source_id)
             assert src is not None
             for cand in result.candidates:
-                copy = cand.copy_
-                assert copy is not None
+                copy = cand.copy_  # None for moment candidates: copy is written right before they render
                 row = CandidateRow(
                     source_id=source_id,
                     start_s=cand.start_s,
@@ -712,16 +811,20 @@ class Pipeline:
                     standalone=cand.standalone,
                     brief_ok=cand.brief_ok,
                     reasons=cand.reasons,
-                    hook=copy.hook,
-                    title=copy.youtube_title,
-                    captions_json={c.platform.value: c.text for c in copy.captions},
+                    hook=copy.hook if copy is not None else None,
+                    title=copy.youtube_title if copy is not None else None,
+                    captions_json={c.platform.value: c.text for c in copy.captions} if copy is not None else None,
                     prompt_version=cand.prompt_version,
                     **moment_columns(cand.moment),
                 )
                 s.add(row)
                 s.flush()
-                what = f"score {cand.score}" + (f", {cand.moment.archetype}" if cand.moment else "")
-                record_event(s, "candidate", row.id, None, ClipState.CANDIDATE.value, detail=f"{what}, {row.hook}")
+                what = f"score {cand.score}"
+                if cand.moment is not None:
+                    what += f", {cand.moment.archetype}, found by {cand.moment.found_by or '?'}"
+                record_event(
+                    s, "candidate", row.id, None, ClipState.CANDIDATE.value, detail=f"{what}, {row.hook or row.reasons}"
+                )
             set_source_status(s, src, SourceStatus.RANKED, detail=result.detail()[:1000])
             if not result.candidates:
                 alerts.raise_alert(s, alerts.RANK_EMPTY, source_id, f"source {source_id} produced no candidates")
@@ -737,9 +840,11 @@ class Pipeline:
         fewshots: list[Fewshot],
         local_path: Path | None,
         used: Sequence[tuple[float, float]] = (),
+        source_id: int | None = None,
     ) -> RankResult:
         """Loudness/motion signals (cheap ffmpeg passes, no DB session held), then the moment ranker. Missing or
-        failed media signals are not fatal: the ranker runs on the transcript and the gates record it."""
+        failed media signals are not fatal: the ranker runs on the transcript and records it. The keyframe check
+        reads frames from the full source file (facecam resolved on the shortlist windows first)."""
         signals = MediaSignals()
         if local_path is None or not local_path.is_file():
             signals.problems.append("source media is not on disk")
@@ -765,7 +870,33 @@ class Pipeline:
             loudness_db=signals.loudness_db,
             motion=signals.motion,
             exclude=used,
+            frames=self._frames_factory(source_id, campaign, local_path, profile),
         )
+
+    def _frames_factory(
+        self, source_id: int | None, campaign: Campaign, local_path: Path | None, profile: MomentProfile
+    ) -> Callable[[Sequence[tuple[float, float]]], FramesFn | None] | None:
+        """For the keyframe check: frames from the source file, with facecam crops when the source has a facecam."""
+        if not profile.vision.enabled or source_id is None or local_path is None or not local_path.is_file():
+            return None
+        path = local_path
+
+        def factory(windows: Sequence[tuple[float, float]]) -> FramesFn | None:
+            if self.deps.vision_frames is not None:
+                return self.deps.vision_frames(path, windows)
+            try:
+                info = self.deps.qa_probe(path)
+            except ProbeError:
+                return None
+            box = None
+            if profile.vision.facecam_crop:
+                spec = resolve_facecam(self.settings, self.factory, self.deps, source_id, campaign, windows)
+                if spec is not None and info.width and info.height:
+                    box = spec.resolve(info.width, info.height)
+            v = profile.vision
+            return source_frames(path, width=v.frame_width, quality=v.jpeg_quality, facecam=box)
+
+        return factory
 
     # -- render ---------------------------------------------------------------------------------
 
@@ -832,6 +963,13 @@ class Pipeline:
         if failure is not None:
             self._render_failed(cand_id, failure)
             return
+        if not hook:  # moment candidates get copy only once they are picked to render (moments-v2)
+            try:
+                with costs.for_source(inputs.source_id, "copy"):
+                    hook, inputs = self._write_copy(cand_id, inputs)
+            except (RankError, PromptError, ComplianceError) as exc:
+                self._render_failed(cand_id, exc)
+                return
         facecam = resolve_facecam(self.settings, self.factory, self.deps, inputs.source_id, inputs.campaign)
         inputs = replace(inputs, facecam=facecam)
         try:
@@ -870,6 +1008,43 @@ class Pipeline:
             else:
                 transition(s, clip, ClipState.QA_FAILED, detail=_failed_checks(report)[:1000])
                 self.report.qa_failed += 1
+
+    def _write_copy(self, cand_id: int, inputs: _RenderInputs) -> tuple[str, _RenderInputs]:
+        """Hook, title and captions (Sonnet) for a candidate picked to render; stored on the candidate row."""
+        self._guard()
+        with session_scope(self.factory) as s:
+            cand = s.get(CandidateRow, cand_id)
+            assert cand is not None
+            model = _candidate_model(cand)
+            fewshots = load_fewshots(s)
+            clip_text = text_between(inputs.words, cand.start_s, cand.end_s)
+        profile: MomentProfile | None = None
+        if inputs.campaign.moment_profile is not None:
+            try:
+                profile = load_profile(inputs.campaign.moment_profile)
+            except ProfileError:
+                profile = None
+        if self._claude is None:
+            self._claude = _build_claude(self.settings, self.factory, self.deps)
+        copy = write_copy(
+            model,
+            clip_text,
+            inputs.campaign,
+            inputs.account.platforms,
+            client=self._claude,
+            fewshots=fewshots,
+            moment=moment_note(model, profile),
+        )
+        captions = {c.platform: c.text for c in copy.captions}
+        with session_scope(self.factory) as s:
+            cand = s.get(CandidateRow, cand_id)
+            assert cand is not None
+            cand.hook = copy.hook
+            cand.title = copy.youtube_title
+            cand.captions_json = {p.value: t for p, t in captions.items()}
+            record_event(s, "candidate", cand_id, None, None, detail=f"copy written: {copy.hook}")
+        self.report.copy_written += 1
+        return copy.hook, replace(inputs, captions=captions, title=copy.youtube_title)
 
     def _render_failed(self, cand_id: int, exc: Exception) -> None:
         text = _redact(self.settings, f"{type(exc).__name__}: {exc}")[:300]

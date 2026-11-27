@@ -21,6 +21,7 @@ from clipforge.db.models import (
     SubmissionRow,
     TranscriptRow,
     ViewSnapshotRow,
+    VodProposalRow,
     utcnow,
 )
 from clipforge.db.session import make_engine, make_session_factory, session_scope
@@ -43,6 +44,7 @@ __all__ = [
     "SubmissionRow",
     "TranscriptRow",
     "ViewSnapshotRow",
+    "VodProposalRow",
     "make_engine",
     "make_session_factory",
     "record_event",

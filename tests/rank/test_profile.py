@@ -21,19 +21,32 @@ def _gta_raw() -> dict:
     return yaml.safe_load((profiles_dir() / "gta6-streamer.yaml").read_text())
 
 
-def test_gta_profile_matches_the_research_starting_values() -> None:
+def test_gta_profile_v2_catalogue_rubric_and_weights() -> None:
     p = load_profile("gta6-streamer")
-    w = p.weights
-    assert (w.reaction, w.event, w.setup, w.absurdity) == (0.35, 0.25, 0.25, 0.15)
-    assert p.archetype_ids == ["blunder", "shock", "npc_weirdness", "glitch", "chaos", "chat_interplay", "other"]
+    assert p.weights_version == "gta6-streamer-v2"
+    assert p.rubric_ids == ["hook", "arc", "arousal", "sendability", "clarity", "density"]
+    assert p.weights == {"hook": 0.2, "arc": 0.2, "arousal": 0.2, "sendability": 0.2, "clarity": 0.1, "density": 0.1}
+    assert p.archetype_ids == [
+        "blunder", "npc_absurd", "glitch", "chaos", "discovery", "bit", "chat_interplay", "other",
+    ]  # fmt: skip
+    discovery = next(a for a in p.archetypes if a.id == "discovery")
+    assert "secret" in discovery.copy_hint
+    assert discovery.examples
+    assert discovery.signs
+    assert "loud reactions to nothing" in p.reject_examples
     win = p.window
-    assert (win.pre_roll_min_s, win.pre_roll_max_s) == (2, 5)
-    assert (win.min_s, win.target_max_s, win.max_s) == (12, 35, 45)
-    assert p.gates.reaction_within_s == 3
+    assert (win.min_s, win.target_min_s, win.target_max_s, win.max_s) == (12, 15, 30, 45)
+    assert win.context_s == 30
+    assert (p.content_pass.segment_s, p.content_pass.overlap_s) == (720, 120)
+    assert p.vision.enabled
+    assert p.vision.max_frames == 8
+    assert p.vision.frame_every_s == 2.5
+    assert p.gates.min_score == 40  # unchanged threshold (now on the six-part rubric)
     assert {r.id: r.action for r in p.skip_rules} == {
         "cutscene": "reject",
         "story_reveal": "reject",
         "media_alone": "reject",
+        "no_event": "reject",
         "cutscene_part": "penalize",
     }
     assert {r.id for r in p.review_flags} == {"sexual", "graphic"}
@@ -47,7 +60,7 @@ def test_every_campaign_profile_reference_exists() -> None:
         if c.moment_profile:
             load_profile(c.moment_profile)
             names.add(c.moment_profile)
-    assert "gta6-streamer" in names  # Boeshi opted in
+    assert "gta6-streamer" in names  # Boeshi, Dylan Page and AsianJeff opted in
 
 
 def test_boeshi_uses_the_gta_profile_and_keeps_its_style_notes() -> None:
@@ -59,10 +72,12 @@ def test_boeshi_uses_the_gta_profile_and_keeps_its_style_notes() -> None:
 @pytest.mark.parametrize(
     ("change", "message"),
     [
-        (lambda r: r["weights"].update(reaction=0.5), "sum to 1.0"),
+        (lambda r: r["weights"].update(hook=0.5), "sum to 1.0"),
+        (lambda r: r["weights"].pop("density"), "exactly the rubric ids"),
+        (lambda r: r["content_pass"].update(overlap_s=600), "at most half"),
         (lambda r: r.update(archetypes=[a for a in r["archetypes"] if a["id"] != "other"]), "include 'other'"),
         (lambda r: r["window"].update(max_s=120), "max_s"),
-        (lambda r: r["window"].update(pre_roll_s=9), "pre_roll"),
+        (lambda r: r["window"].update(target_min_s=40), "target_min_s"),
         (lambda r: r["archetypes"].append(dict(r["archetypes"][0])), "unique"),
         (lambda r: r["lexicon"].update(laughter_patterns=["(unclosed"]), "laughter pattern"),
         (lambda r: r.update(surprise=1), "Extra inputs"),
@@ -100,7 +115,7 @@ def test_campaign_profile_name_is_validated() -> None:
 def test_no_niche_terms_in_generic_code_or_ranker_prompt() -> None:
     """Archetypes, words and policy live in the profile; the code and prompt name no game, streamer or publisher."""
     files = [*(ROOT / "src/clipforge/rank").glob("*.py"), ROOT / "src/clipforge/track/moments.py"]
-    files.append(ROOT / "prompts/score_moments.md")
+    files += [ROOT / f"prompts/{name}.md" for name in ("score_moments", "propose_moments", "judge_frames")]
     pattern = re.compile(r"gta|grand theft|rockstar|boeshi|wanted level|weazel", re.I)
     for f in files:
         assert not pattern.search(f.read_text()), f

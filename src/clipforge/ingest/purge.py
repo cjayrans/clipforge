@@ -11,6 +11,11 @@ Sources with no candidates are purged only when they can never produce one (FAIL
 
 Only files inside `media_dir` are deleted. The row keeps its sha256 (and the transcript is kept); status becomes
 PURGED with `purged_at` set.
+
+moments-v2: whole VODs are tens of GB, so the nightly run also calls `purge_if_done` for every ranked or failed
+source: the file is deleted as soon as nothing is pending (every candidate terminal, or rendered with every clip
+terminal: nothing awaiting review, approval or publishing, and no unrendered candidate). Unrendered candidates
+expire 3 days after ranking (pipeline.CANDIDATE_TTL). The 7-day purge stays as a backstop.
 """
 
 from __future__ import annotations
@@ -85,6 +90,32 @@ def _inside(path: Path, root: Path) -> bool:
         return False
 
 
+def _delete(session: Session, settings: Settings, source: SourceRow, now: datetime, why: str) -> bool:
+    path = Path(source.local_path or "")
+    if not _inside(path, settings.media_dir):
+        log.error("refusing to purge source %s: %s is outside the media dir", source.id, path)
+        return False
+    path.unlink(missing_ok=True)
+    old_path = source.local_path
+    source.local_path = None
+    source.purged_at = now
+    set_source_status(session, source, SourceStatus.PURGED, detail=f"deleted {old_path} ({why})")
+    log.info("purged source %s (%s, %s)", source.id, old_path, why)
+    return True
+
+
+def purge_if_done(session: Session, settings: Settings, source_id: int, *, now: datetime | None = None) -> bool:
+    """Delete one source's file now if nothing is pending on it (see module docstring). True if deleted."""
+    source = session.get(SourceRow, source_id)
+    if source is None or source.status is SourceStatus.PURGED or not source.local_path:
+        return False
+    if source.status not in NO_CANDIDATE_TERMINAL:  # still in the pipeline (registered, downloaded, transcribed)
+        return False
+    if done_since(session, source) is None:
+        return False
+    return _delete(session, settings, source, now or utcnow(), "nothing pending")
+
+
 def purge_sources(session: Session, settings: Settings, *, now: datetime | None = None) -> list[int]:
     """Delete eligible source files; return the purged source ids."""
     now = now or utcnow()
@@ -97,15 +128,6 @@ def purge_sources(session: Session, settings: Settings, *, now: datetime | None 
         since = done_since(session, source)
         if since is None or now - since < keep:
             continue
-        path = Path(source.local_path or "")
-        if not _inside(path, settings.media_dir):
-            log.error("refusing to purge source %s: %s is outside the media dir", source.id, path)
-            continue
-        path.unlink(missing_ok=True)
-        old_path = source.local_path
-        source.local_path = None
-        source.purged_at = now
-        set_source_status(session, source, SourceStatus.PURGED, detail=f"deleted {old_path}")
-        purged.append(source.id)
-        log.info("purged source %s (%s)", source.id, old_path)
+        if _delete(session, settings, source, now, f"{keep.days} days after the last decision"):
+            purged.append(source.id)
     return purged

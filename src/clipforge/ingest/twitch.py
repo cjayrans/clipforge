@@ -120,11 +120,13 @@ def download(
     ytdl_factory: YtdlFactory | None = None,
     channels: Sequence[str] = (),
     max_minutes: int | None = None,
+    disk_check: Callable[[dict[str, Any]], None] | None = None,
 ) -> Path:
     """Download one Twitch VOD or clip to `out_dir/<stem>.<ext>`; return the path.
 
     With `channels`, the metadata is fetched first (no media) and the download is refused unless the video belongs to
-    one of those channel logins and is not still live. With `max_minutes`, only the first N minutes are fetched."""
+    one of those channel logins and is not still live. With `max_minutes`, only the first N minutes are fetched.
+    With `disk_check`, the metadata is fetched first too and passed to it (it raises to refuse the download)."""
     from clipforge.ingest.download import DownloadError
 
     if compliance.classify_source_host(url) is not SourceHost.TWITCH:
@@ -134,13 +136,15 @@ def download(
     max_seconds = max_minutes * 60 if max_minutes else None
     try:
         with factory(ytdl_options(out_dir, stem, max_seconds=max_seconds)) as ydl:
-            if channels:
+            if channels or disk_check is not None:
                 meta = ydl.extract_info(url, download=False)
                 if not isinstance(meta, dict):
                     raise DownloadError("yt-dlp returned no info")
                 check_channel(meta, channels)
                 if meta.get("is_live"):
                     raise DownloadError("this Twitch VOD is still live (recording); download it after the stream")
+                if disk_check is not None:
+                    disk_check(meta)
             info = ydl.extract_info(url, download=True)
     except (ComplianceError, DownloadError):
         raise

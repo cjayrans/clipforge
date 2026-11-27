@@ -18,7 +18,7 @@ from clipforge.qa.probe import ProbeResult
 from clipforge.render.reframe import FaceBox
 from clipforge.render.shots import Shot
 from tests.rank.anthropic_mock import FakeAnthropic, json_text
-from tests.rank.moment_fakes import echo_moments
+from tests.rank.moment_fakes import moment_tools
 from tests.rank.test_score import echo_scores
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -153,14 +153,17 @@ def copy_payload(hook: str = "He tried jumping to a helicopter") -> dict[str, An
     }
 
 
-def fake_anthropic(hooks: Sequence[str] = ()) -> FakeAnthropic:
-    """Haiku scoring echoes a score for every window; Sonnet copy returns `copy_payload`, using `hooks` in order."""
+def fake_anthropic(hooks: Sequence[str] = (), proposals: Sequence[dict[str, Any]] = ()) -> FakeAnthropic:
+    """Haiku scoring echoes a score for every window or moment candidate; the moment content pass proposes
+    `proposals` (none by default); the keyframe check approves; Sonnet copy returns `copy_payload`, using `hooks` in
+    order."""
     queue = list(hooks)
+    moments = moment_tools(proposals=proposals)
 
     def respond(body: dict[str, Any]) -> httpx2.Response:
         if body.get("tools"):
-            if body["tools"][0]["name"] == "score_moments":
-                return echo_moments()(body)
+            if body["tools"][0]["name"] in ("score_moments", "propose_moments", "judge_frames"):
+                return moments(body)
             return echo_scores(body)
         hook = queue.pop(0) if queue else "He tried jumping to a helicopter"
         return json_text(copy_payload(hook))

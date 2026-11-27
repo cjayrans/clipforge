@@ -193,6 +193,7 @@ class RankResult:
     prompt_version: str = ""
     failed_batches: list[str] = field(default_factory=list)  # moment ranker; the window ranker uses score
     detail_extra: str = ""  # moment ranker: signal and gate counts
+    moment_run: Any = None  # moment ranker: rank.moment_score.MomentRun (every candidate, for reports)
 
     def detail(self) -> str:
         """The source's RANKED event detail."""
