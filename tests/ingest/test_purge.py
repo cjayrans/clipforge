@@ -124,3 +124,37 @@ def test_missing_file_still_marked_purged(session: Session, settings: Settings, 
     src = _media_source(factory, settings, status=SourceStatus.FAILED, fail_reason="x")
     Path(src.local_path or "").unlink()
     assert purge_sources(session, settings, now=_later(8)) == [src.id]
+
+
+# --- moments-v2: delete as soon as nothing is pending ---------------------------------------------------
+
+
+def test_purge_if_done_deletes_once_nothing_is_pending(session: Session, settings: Settings, factory: Factory) -> None:
+    from clipforge.ingest.purge import purge_if_done
+
+    src = _media_source(factory, settings)
+    waiting = factory.candidate(src)  # unrendered candidate: footage is still needed
+    path = Path(src.local_path or "")
+    assert purge_if_done(session, settings, src.id) is False
+    transition(session, waiting, ClipState.RENDERED)
+    clip = factory.clip(waiting)
+    transition(session, clip, ClipState.PENDING_REVIEW)  # awaiting review: still needed (New hook, relayout)
+    assert purge_if_done(session, settings, src.id) is False
+    transition(session, clip, ClipState.APPROVED, actor="operator")  # awaiting publishing: still needed
+    assert purge_if_done(session, settings, src.id) is False
+    transition(session, clip, ClipState.EXPIRED)  # e.g. the campaign ended before it was published
+    assert purge_if_done(session, settings, src.id) is True
+    assert not path.exists()
+    assert src.status is SourceStatus.PURGED
+    assert "nothing pending" in session.scalars(select(EventRow).where(EventRow.entity == "source")).all()[-1].detail
+
+
+def test_purge_if_done_leaves_failed_and_in_flight_sources(
+    session: Session, settings: Settings, factory: Factory
+) -> None:
+    from clipforge.ingest.purge import purge_if_done
+
+    for status in (SourceStatus.FAILED, SourceStatus.TRANSCRIBED, SourceStatus.DOWNLOADED):
+        src = _media_source(factory, settings, status=status)
+        assert purge_if_done(session, settings, src.id) is False
+        assert Path(src.local_path or "").exists()

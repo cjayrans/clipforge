@@ -52,6 +52,9 @@ class Secrets(BaseSettings):
     telegram_bot_token: SecretStr | None = None
     telegram_owner_chat_id: int | None = None
     youtube_api_key: SecretStr | None = None
+    # moments-v2: Twitch Helix app credentials, only to look up recent VODs to propose (never to download)
+    twitch_client_id: SecretStr | None = None
+    twitch_client_secret: SecretStr | None = None
 
     def secret_values(self) -> list[str]:
         """Non-empty secret strings, for the log redaction filter. Never print the result."""

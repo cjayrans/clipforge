@@ -601,7 +601,7 @@ class Pipeline:
             ids = list(
                 s.scalars(
                     select(SourceRow.id).where(
-                        SourceRow.status.in_([SourceStatus.RANKED, SourceStatus.FAILED]),
+                        SourceRow.status == SourceStatus.RANKED,
                         SourceRow.local_path.is_not(None),
                     )
                 )

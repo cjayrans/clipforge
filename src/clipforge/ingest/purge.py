@@ -12,10 +12,11 @@ Sources with no candidates are purged only when they can never produce one (FAIL
 Only files inside `media_dir` are deleted. The row keeps its sha256 (and the transcript is kept); status becomes
 PURGED with `purged_at` set.
 
-moments-v2: whole VODs are tens of GB, so the nightly run also calls `purge_if_done` for every ranked or failed
-source: the file is deleted as soon as nothing is pending (every candidate terminal, or rendered with every clip
-terminal: nothing awaiting review, approval or publishing, and no unrendered candidate). Unrendered candidates
-expire 3 days after ranking (pipeline.CANDIDATE_TTL). The 7-day purge stays as a backstop.
+moments-v2: whole VODs are tens of GB, so the nightly run also calls `purge_if_done` for every RANKED source: the
+file is deleted as soon as nothing is pending (every candidate terminal, or rendered with every clip terminal: nothing
+awaiting review, approval or publishing, and no unrendered candidate). Unrendered candidates expire 3 days after
+ranking (pipeline.CANDIDATE_TTL). FAILED sources keep their file for `cf source retry`; the 7-day purge stays as the
+backstop for them.
 """
 
 from __future__ import annotations
@@ -109,8 +110,8 @@ def purge_if_done(session: Session, settings: Settings, source_id: int, *, now: 
     source = session.get(SourceRow, source_id)
     if source is None or source.status is SourceStatus.PURGED or not source.local_path:
         return False
-    if source.status not in NO_CANDIDATE_TERMINAL:  # still in the pipeline (registered, downloaded, transcribed)
-        return False
+    if source.status is not SourceStatus.RANKED:  # still in the pipeline, or FAILED (kept for `cf source retry`;
+        return False  # the 7-day purge removes it)
     if done_since(session, source) is None:
         return False
     return _delete(session, settings, source, now or utcnow(), "nothing pending")

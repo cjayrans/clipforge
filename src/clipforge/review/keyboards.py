@@ -24,8 +24,12 @@ SKIP = "skp"
 SUBMITTED = "sub"
 MISSED = "mis"
 RECONCILE = "rc"
+VOD_ADD = "va"  # moments-v2: register a proposed VOD as a source
+VOD_DISMISS = "vd"
 
-ACTIONS = frozenset({APPROVE, REJECT, REJECT_REASON, NEW_HOOK, SHORTER, ARM, SKIP, SUBMITTED, MISSED, RECONCILE})
+ACTIONS = frozenset(
+    {APPROVE, REJECT, REJECT_REASON, NEW_HOOK, SHORTER, ARM, SKIP, SUBMITTED, MISSED, RECONCILE, VOD_ADD, VOD_DISMISS}
+)
 
 REASON_LABELS: dict[RejectReason, str] = {
     RejectReason.OFF_BRIEF: "Off-brief",
@@ -74,6 +78,11 @@ def review_keyboard(clip_id: int, stamp: int) -> InlineKeyboardMarkup:
             [_btn("New hook", NEW_HOOK, clip_id), _btn("Shorter", SHORTER, clip_id)],
         ]
     )
+
+
+def vod_keyboard(proposal_id: int) -> InlineKeyboardMarkup:
+    """Add registers the VOD as a source (the only way a proposed VOD is ever downloaded); Dismiss forgets it."""
+    return InlineKeyboardMarkup([[_btn("Add", VOD_ADD, proposal_id), _btn("Dismiss", VOD_DISMISS, proposal_id)]])
 
 
 def reject_reason_keyboard(clip_id: int, stamp: int) -> InlineKeyboardMarkup:

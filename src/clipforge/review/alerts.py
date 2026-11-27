@@ -37,7 +37,6 @@ RANK_EMPTY = "rank_empty"
 RENDER_FAILED = "render_failed"
 RERENDER_FAILED = "rerender_failed"
 SOURCE_SPEND_CAP = "source_spend_cap"  # moments-v2: one source reached per_source_cap_usd
-VOD_DISCOVERY_FAILED = "vod_discovery_failed"  # moments-v2: the nightly Twitch VOD lookup failed
 
 _URL_QUERY_RE = re.compile(r"(\b[a-z][a-z0-9+.-]*://[^\s?#]+)\?[^\s#]*", re.IGNORECASE)
 

@@ -64,3 +64,28 @@ def test_pause_resume_events(session: Session) -> None:
     assert costs.is_paused(session) is None
     events = session.scalars(select(EventRow).where(EventRow.entity == "pipeline")).all()
     assert [e.to_state for e in events] == ["paused", "paused", "running"]
+
+
+# --- moments-v2: per-source spend guard ------------------------------------------------------------
+
+
+def test_for_source_tags_rows_and_caps_one_source(session, app_config) -> None:
+    from clipforge.db import CostRow
+
+    with costs.for_source(7, "transcribe"):
+        costs.record(session, app_config, "groq", "whisper-large-v3-turbo", 3600, "audio_seconds")
+        with costs.stage("vision"):
+            costs.record(session, app_config, "anthropic", "claude-haiku-5-5", 1000, "input_tokens")
+        costs.guard(session, app_config)  # well under the cap
+    costs.record(session, app_config, "anthropic", "claude-haiku-5-5", 1000, "input_tokens")  # untagged
+    rows = session.query(CostRow).order_by(CostRow.id).all()
+    assert [(r.source_id, r.stage) for r in rows] == [(7, "transcribe"), (7, "vision"), (None, None)]
+    assert costs.source_spend(session, 7) == pytest.approx(0.04 + 0.0001)
+    assert costs.source_spend(session, 7, stage="vision") == pytest.approx(0.0001)
+    with costs.for_source(7, "rank"):
+        costs.record(session, app_config, "groq", "whisper-large-v3-turbo", 3600 * 40, "audio_seconds")  # $1.60
+        with pytest.raises(costs.SourceSpendCapReached, match="source 7"):
+            costs.guard(session, app_config)
+    costs.guard(session, app_config)  # other work is not stopped
+    with costs.for_source(8, "rank"):
+        costs.guard(session, app_config)

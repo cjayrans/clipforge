@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from clipforge.config import Settings
-from clipforge.db import ClipRow, session_scope
+from clipforge.db import ClipRow, VodProposalRow, session_scope
 from clipforge.review import alerts, keyboards
 from clipforge.review.notify import MAX_VIDEO_BYTES, Notifier, NotifyError
 from clipforge.review.service import get_flag, render_stamp, set_flag
@@ -88,3 +88,32 @@ async def send_pending_previews(factory: sessionmaker[Session], settings: Settin
                 alerts.raise_alert(session, alerts.PREVIEW_TOO_BIG, clip_id, f"clip {clip_id}: {problem}")
         handled += 1
     return handled
+
+
+def vod_flag(proposal_id: int) -> str:
+    return f"vod_proposal_sent:{proposal_id}"
+
+
+async def send_pending_vod_proposals(factory: sessionmaker[Session], notifier: Notifier) -> int:
+    """moments-v2: send each pending VOD proposal once, with Add / Dismiss buttons. Returns how many were sent."""
+    from clipforge.ingest.twitch_helix import proposal_text
+
+    with session_scope(factory) as session:
+        rows = session.scalars(
+            select(VodProposalRow).where(VodProposalRow.decision == "pending").order_by(VodProposalRow.id)
+        ).all()
+        todo = [(r.id, proposal_text(r)) for r in rows if get_flag(session, vod_flag(r.id)) is None]
+    sent = 0
+    for proposal_id, text in todo:
+        try:
+            message_id = await notifier.send_text(text, keyboards.vod_keyboard(proposal_id))
+        except NotifyError as exc:
+            log.warning("VOD proposal %s not sent (%s); will retry", proposal_id, exc)
+            continue
+        with session_scope(factory) as session:
+            row = session.get(VodProposalRow, proposal_id)
+            if row is not None:
+                row.message_id = message_id
+            set_flag(session, vod_flag(proposal_id), "sent")
+        sent += 1
+    return sent

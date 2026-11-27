@@ -24,6 +24,7 @@ DUPLICATE_SOURCE = "duplicate_source"
 INBOX_UNKNOWN = "inbox_unknown_campaign"
 TRANSCRIBE_FAILED = "transcribe_failed"
 TRANSCRIBE_FALLBACK = "transcribe_fallback"
+VOD_DISCOVERY_FAILED = "vod_discovery_failed"  # moments-v2: the nightly Twitch VOD lookup failed
 
 
 def alert_operator(session: Session, kind: str, entity_id: int | str, message: str) -> EventRow:

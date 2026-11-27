@@ -40,7 +40,7 @@ from clipforge.review import keyboards
 from clipforge.review.deliver import check_worker_heartbeat, deliver_pending_alerts
 from clipforge.review.evening import arm_evening, mark_missed, mark_submitted, skip_from_button
 from clipforge.review.notify import Notifier, notifier_from_settings
-from clipforge.review.previews import send_pending_previews
+from clipforge.review.previews import send_pending_previews, send_pending_vod_proposals
 from clipforge.review.service import (
     ReviewHooks,
     StaleAction,
@@ -263,6 +263,23 @@ async def _missed(deps: BotDeps, parts: list[str], message_id: int | None) -> Ou
     return Outcome("Marked missed", reply=f"Submission {sub.id}: marked missed.")
 
 
+async def _vod(deps: BotDeps, parts: list[str], message_id: int | None, *, add: bool) -> Outcome:
+    from clipforge.ingest.twitch_helix import decide
+
+    proposal_id = keyboards.int_part(parts)
+    with session_scope(deps.factory) as session:
+        text = decide(session, deps.settings, proposal_id, add=add, now=deps.clock())
+    return Outcome("Added" if add else "Dismissed", reply=text)
+
+
+async def _vod_add(deps: BotDeps, parts: list[str], message_id: int | None) -> Outcome:
+    return await _vod(deps, parts, message_id, add=True)
+
+
+async def _vod_dismiss(deps: BotDeps, parts: list[str], message_id: int | None) -> Outcome:
+    return await _vod(deps, parts, message_id, add=False)
+
+
 ACTION_HANDLERS: dict[str, ActionHandler] = {
     keyboards.APPROVE: _approve,
     keyboards.REJECT: _reject_menu,
@@ -273,6 +290,8 @@ ACTION_HANDLERS: dict[str, ActionHandler] = {
     keyboards.SKIP: _skip,
     keyboards.SUBMITTED: _submitted,
     keyboards.MISSED: _missed,
+    keyboards.VOD_ADD: _vod_add,
+    keyboards.VOD_DISMISS: _vod_dismiss,
 }
 
 
@@ -387,6 +406,7 @@ async def background_tick(deps: BotDeps, *, beat: bool) -> None:
     for name, step in (
         ("previews", lambda: send_pending_previews(deps.factory, deps.settings, deps.notifier)),
         ("alerts", lambda: deliver_pending_alerts(deps.factory, deps.notifier)),
+        ("vod proposals", lambda: send_pending_vod_proposals(deps.factory, deps.notifier)),
     ):
         try:
             await step()
