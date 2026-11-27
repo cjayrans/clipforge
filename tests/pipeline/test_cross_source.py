@@ -116,3 +116,36 @@ def test_per_source_cap_fails_that_source_and_the_run_goes_on(
         assert "per_source_cap_usd" in alert.detail
         tagged = s.scalars(select(costs.CostRow).where(costs.CostRow.source_id == second)).all()
         assert {r.stage for r in tagged} >= {"transcribe", "content", "score"}
+
+
+def test_per_source_cap_at_copy_time_skips_the_candidate_not_the_source(
+    pipe_settings: Settings,
+    db: sessionmaker[Session],
+    deps: PipelineDeps,
+    anthropic: FakeAnthropic,
+    monkeypatch: Any,
+) -> None:
+    from clipforge.pipeline import Pipeline
+
+    original = Pipeline._write_copy
+
+    def spend_then_copy(self, cand_id, inputs):  # the source reached its cap between ranking and copy
+        with session_scope(self.factory) as s, costs.for_source(inputs.source_id, "other"):
+            costs.record(s, self.app, "groq", "whisper-large-v3-turbo", 3600 * 40, "audio_seconds")
+        return original(self, cand_id, inputs)
+
+    monkeypatch.setattr(Pipeline, "_write_copy", spend_then_copy)
+    with two_sources_http():
+        _, source_id = add_campaign(db, pipe_settings, moment_profile="gta6-streamer")
+        anthropic.default = moment_tools(other=lambda body: json_text(copy_payload("A hook")))
+        report = run_once(pipe_settings, deps=replace(deps, moment_signals=good_signals()))
+    assert report.rendered == 0
+    assert report.paused is None
+    assert not [r for r in anthropic.requests if not r.get("tools")]  # no Sonnet call
+    with session_scope(db) as s:
+        assert s.get(SourceRow, source_id).status is SourceStatus.RANKED  # not failed
+        cands = s.scalars(select(CandidateRow)).all()
+        assert cands
+        assert all(c.state is ClipState.CANDIDATE for c in cands)  # skipped; they expire after 3 days
+        alerts = s.scalars(select(EventRow).where(EventRow.to_state == "source_spend_cap")).all()
+        assert len(alerts) == 1  # one alert per source per run

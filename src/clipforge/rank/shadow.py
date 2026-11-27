@@ -386,6 +386,7 @@ def live_guard(
         if mtd + run_spend >= cap:
             raise costs.SpendCapReached(mtd + run_spend, cap)
 
+    check.dispose = live_engine.dispose  # type: ignore[attr-defined]
     return check
 
 
@@ -424,6 +425,7 @@ def shadow_rank(
         profile = load_profile(campaign.moment_profile)
         if ledger_url:  # running on a copy: the live database's cap and pause flag still apply
             check = live_guard(settings, ledger_url, factory, first_cost)
+            stack.callback(check.dispose)  # type: ignore[attr-defined]
             check()  # before downloading anything
             stack.enter_context(costs.extra_guard(check))
 

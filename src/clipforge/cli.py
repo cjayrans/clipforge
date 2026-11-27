@@ -253,7 +253,11 @@ def source_shadow_rank(
         str, typer.Option(help="Clip ids picked before, to compare against (e.g. 24-31 or 24,25,26).")
     ] = "",
     ledger_url: Annotated[
-        str | None, typer.Option(help="Database URL for cost rows (default: the same database).")
+        str | None,
+        typer.Option(
+            help="Live database URL when running on a copy: its monthly cap and pause flag are enforced and this "
+            "run's cost rows are appended to it (pointing it at the same database counts the run twice: safe)."
+        ),
     ] = None,
 ) -> None:
     """Rank a source with the current moment logic WITHOUT writing candidates, and write a comparison report."""

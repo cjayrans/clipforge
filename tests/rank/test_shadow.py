@@ -187,3 +187,54 @@ def test_live_ledger_at_the_cap_stops_before_any_paid_call(shadow_settings: Sett
         shadow_rank(shadow_settings, source_id, report=tmp_path / "r.md", full=True, ledger_url=url, deps=d)
     assert fake.requests == []
     assert MetaYDL.instances == []  # not even downloaded
+
+
+def _live_db(tmp_path: Path, *, paused: bool = False) -> str:
+    from clipforge.db import FlagRow
+
+    url = f"sqlite:///{tmp_path / 'live2.db'}"
+    upgrade(url)
+    engine = make_engine(url)
+    with session_scope(make_session_factory(engine)) as s:
+        if paused:
+            s.add(FlagRow(key="pipeline_paused", value="operator pause"))
+    engine.dispose()
+    return url
+
+
+def test_live_pause_flag_stops_the_shadow_run(shadow_settings: Settings, tmp_path: Path) -> None:
+    from clipforge import costs
+
+    source_id, _ = seed(shadow_settings)
+    fake = FakeAnthropic()
+    d = deps(fake)
+    with pytest.raises(costs.SpendCapReached, match="paused"):
+        shadow_rank(shadow_settings, source_id, report=tmp_path / "r.md", ledger_url=_live_db(tmp_path, paused=True),
+                    deps=d)  # fmt: skip
+    assert fake.requests == []
+
+
+def test_live_spend_crossing_the_cap_mid_run_stops_the_next_paid_call(
+    shadow_settings: Settings, tmp_path: Path
+) -> None:
+    from clipforge import costs
+    from clipforge.db import CostRow
+
+    source_id, _ = seed(shadow_settings)
+    url = _live_db(tmp_path)
+    fake = FakeAnthropic()
+    d = deps(fake)
+    inner = d.signals
+
+    def signals_then_live_spend(path, rules):  # the live worker spends meanwhile
+        engine = make_engine(url)
+        with session_scope(make_session_factory(engine)) as s:
+            s.add(CostRow(service="anthropic", model="claude-haiku-5-5", units=1, unit_kind="input_tokens",
+                          usd=shadow_settings.app.monthly_api_cap_usd))  # fmt: skip
+        engine.dispose()
+        return inner(path, rules)
+
+    d.signals = signals_then_live_spend
+    with pytest.raises(costs.SpendCapReached):
+        shadow_rank(shadow_settings, source_id, report=tmp_path / "r.md", ledger_url=url, deps=d)
+    assert fake.requests == []  # the content pass never called the model
