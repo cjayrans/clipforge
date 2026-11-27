@@ -130,6 +130,7 @@ def test_full_download_is_registered_only_deleted_after_and_costs_mirror(
     with sqlite3.connect(ledger) as conn:  # an older-schema costs table (no source_id / stage)
         conn.execute("CREATE TABLE costs (id INTEGER PRIMARY KEY, at TEXT, service TEXT, model TEXT, units REAL, "
                      "unit_kind TEXT, usd REAL)")  # fmt: skip
+        conn.execute("CREATE TABLE flags (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)")
     MetaYDL.instances.clear()
     MetaYDL.meta = {"uploader_id": "fakestreamer", "is_live": False, "filesize": 1000}
     fake = FakeAnthropic()
@@ -150,7 +151,7 @@ def test_full_download_is_registered_only_deleted_after_and_costs_mirror(
     assert "groq" not in services
 
 
-def test_unregistered_url_is_never_downloaded(shadow_settings: Settings, tmp_path: Path) -> None:
+def test_no_download_when_the_campaign_lost_stream_permission(shadow_settings: Settings, tmp_path: Path) -> None:
     from clipforge.compliance import ComplianceError
 
     source_id, _ = seed(shadow_settings)
@@ -163,3 +164,26 @@ def test_unregistered_url_is_never_downloaded(shadow_settings: Settings, tmp_pat
         shadow_rank(shadow_settings, source_id, report=tmp_path / "r.md", full=True,
                     deps=deps(FakeAnthropic(), ytdl_factory=MetaYDL))  # fmt: skip
     assert MetaYDL.instances == []
+
+
+def test_live_ledger_at_the_cap_stops_before_any_paid_call(shadow_settings: Settings, tmp_path: Path) -> None:
+    """On a database copy, the live database's month-to-date spend (and pause flag) still apply (COMPLIANCE #12)."""
+    from clipforge import costs
+    from clipforge.db import CostRow
+
+    source_id, _ = seed(shadow_settings)
+    live = tmp_path / "live.db"
+    url = f"sqlite:///{live}"
+    upgrade(url)
+    engine = make_engine(url)
+    with session_scope(make_session_factory(engine)) as s:
+        usd = shadow_settings.app.monthly_api_cap_usd
+        s.add(CostRow(service="groq", model="whisper-large-v3-turbo", units=1, unit_kind="audio_seconds", usd=usd))
+    engine.dispose()
+    fake = FakeAnthropic()
+    MetaYDL.instances.clear()
+    d = deps(fake, ytdl_factory=MetaYDL, transcriber=FakeTranscriber(), runner=media_runner())
+    with pytest.raises(costs.SpendCapReached):
+        shadow_rank(shadow_settings, source_id, report=tmp_path / "r.md", full=True, ledger_url=url, deps=d)
+    assert fake.requests == []
+    assert MetaYDL.instances == []  # not even downloaded

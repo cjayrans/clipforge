@@ -1,6 +1,6 @@
 ---
 name: judge_frames
-version: "1"
+version: "2"
 model_role: rank
 notes: Keyframe check on the shortlist (moments-v2). Haiku with image blocks, forced tool `judge_frames`. Variables $campaign_brief, $ranker_notes, $rubric, $skip_rules, $review_flags (system); the user turn is built in code (the candidate transcript and transcript scores, then keyframes and facecam crops as images).
 ---
@@ -23,7 +23,8 @@ Say what you see, not what the transcript claims:
 - `graphic_risk`: true if frames show graphic violence, gore or sexual content beyond ordinary game action.
 - `setup_clear`: a stranger would understand what is going on from the first frames.
 - one integer field per rubric criterion, 0-10: your corrected score, using the frames and the transcript together.
-  Keep the transcript score when the frames neither support nor contradict it.
+  Keep the transcript score when the frames neither support nor contradict it. Do not lower scores for sexual or
+  graphic content: score the moment, and set `graphic_risk` instead (a human checks flagged clips).
 - `note`: one line, at most 200 characters: what the frames show.
 
 Rubric:

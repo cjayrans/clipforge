@@ -21,6 +21,7 @@ monthly cap there stays true.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 import statistics
@@ -364,6 +365,30 @@ def _mirror_costs(src_factory: sessionmaker[Session], after_id: int, ledger_url:
     return len(rows)
 
 
+def live_guard(
+    settings: Settings, ledger_url: str, copy_factory: sessionmaker[Session], after_id: int
+) -> Callable[[], None]:
+    """A check for `costs.extra_guard`: the live database's pause flag, and its month-to-date spend plus what this run
+    has spent on the copy (not yet mirrored), against `monthly_api_cap_usd`. Reads only columns every schema has."""
+    live_engine = make_engine(ledger_url)
+    live = make_session_factory(live_engine)
+
+    def check() -> None:
+        with session_scope(copy_factory) as s:
+            run_spend = float(s.scalar(select(func.coalesce(func.sum(CostRow.usd), 0.0)).where(CostRow.id > after_id))
+                              or 0.0)  # fmt: skip
+        with session_scope(live) as s:
+            mtd = costs.month_to_date(s, settings.app)
+            reason = costs.is_paused(s)
+        cap = settings.app.monthly_api_cap_usd
+        if reason is not None:
+            raise costs.SpendCapReached(mtd + run_spend, cap, paused_reason=reason)
+        if mtd + run_spend >= cap:
+            raise costs.SpendCapReached(mtd + run_spend, cap)
+
+    return check
+
+
 def shadow_rank(
     settings: Settings,
     source_id: int,
@@ -383,6 +408,7 @@ def shadow_rank(
     stats = ShadowStats()
     scratch = settings.media_dir / "scratch" / f"shadow-{source_id}"
     stats.scratch = str(scratch)
+    stack = contextlib.ExitStack()
     try:
         with session_scope(factory) as s:
             source = s.get(SourceRow, source_id)
@@ -396,6 +422,10 @@ def shadow_rank(
         if campaign.moment_profile is None:
             raise RuntimeError(f"campaign {camp.id} has no moment_profile; shadow-rank needs one")
         profile = load_profile(campaign.moment_profile)
+        if ledger_url:  # running on a copy: the live database's cap and pause flag still apply
+            check = live_guard(settings, ledger_url, factory, first_cost)
+            check()  # before downloading anything
+            stack.enter_context(costs.extra_guard(check))
 
         with costs.for_source(source_id, "shadow-download"):
             if full and compliance.classify_source_host(source.url) is SourceHost.TWITCH:
@@ -456,6 +486,7 @@ def shadow_rank(
         print(f"wrote {report}")
         return report
     finally:
+        stack.close()
         shutil.rmtree(scratch, ignore_errors=True)
         if ledger_url:  # even after a failure: whatever was spent must reach the live ledger
             try:

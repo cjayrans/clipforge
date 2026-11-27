@@ -17,7 +17,7 @@ Every cost row recorded inside is tagged with that source and stage, and `guard(
 from __future__ import annotations
 
 import contextvars
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -73,6 +73,18 @@ class Attribution:
 
 
 _CURRENT: contextvars.ContextVar[Attribution | None] = contextvars.ContextVar("cost_attribution", default=None)
+_EXTRA_GUARD: contextvars.ContextVar[Callable[[], None] | None] = contextvars.ContextVar("cost_guard", default=None)
+
+
+@contextmanager
+def extra_guard(check: Callable[[], None]) -> Iterator[None]:
+    """Inside, every `guard()` also runs `check` (it raises SpendCapReached). Used when work runs on a database copy
+    so the live database's monthly total and pause flag are still enforced (`cf source shadow-rank --ledger-url`)."""
+    token = _EXTRA_GUARD.set(check)
+    try:
+        yield
+    finally:
+        _EXTRA_GUARD.reset(token)
 
 
 @contextmanager
@@ -185,6 +197,9 @@ def guard(session: Session, app: AppConfig, *, now: datetime | None = None) -> f
         raise SpendCapReached(mtd, app.monthly_api_cap_usd, paused_reason=reason)
     if mtd >= app.monthly_api_cap_usd:
         raise SpendCapReached(mtd, app.monthly_api_cap_usd)
+    extra = _EXTRA_GUARD.get()
+    if extra is not None:
+        extra()
     attribution = _CURRENT.get()
     if attribution is not None:
         spent = source_spend(session, attribution.source_id)

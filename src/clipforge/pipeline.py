@@ -512,6 +512,7 @@ class Pipeline:
         self.deps = deps
         self.report = RunReport(started_at=deps.clock())
         self._claude: ClaudeClient | None = None
+        self._capped_sources: set[int] = set()
 
     # -- control ---------------------------------------------------------------------------------
 
@@ -969,6 +970,14 @@ class Pipeline:
                     hook, inputs = self._write_copy(cand_id, inputs)
             except (RankError, PromptError, ComplianceError) as exc:
                 self._render_failed(cand_id, exc)
+                return
+            except costs.SourceSpendCapReached as exc:  # skip it (it expires later); the source and its clips stay
+                if exc.source_id not in self._capped_sources:
+                    self._capped_sources.add(exc.source_id)
+                    with session_scope(self.factory) as s:
+                        alerts.raise_alert(s, alerts.SOURCE_SPEND_CAP, exc.source_id,
+                                           f"source {exc.source_id}: no copy for more candidates: {exc}")  # fmt: skip
+                self._problem(f"candidate {cand_id}: {exc}")
                 return
         facecam = resolve_facecam(self.settings, self.factory, self.deps, inputs.source_id, inputs.campaign)
         inputs = replace(inputs, facecam=facecam)

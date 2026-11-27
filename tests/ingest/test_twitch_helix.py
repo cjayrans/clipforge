@@ -203,3 +203,39 @@ async def test_bot_sends_proposals_once_and_the_add_button_registers(
     update.callback_query.answer.assert_awaited_once_with("Added")
     session.expire_all()
     assert len(session.scalars(select(SourceRow)).all()) == 1
+
+
+def test_add_after_the_recent_window_is_refused(
+    helix: Any, session: Session, settings: Settings, factory: Factory
+) -> None:
+    from datetime import timedelta
+
+    campaign(factory)
+    discover_vods(session, settings, client=HelixClient("cid", "secret"), now=NOW)
+    row = session.scalars(select(VodProposalRow)).first()
+    text = decide(session, settings, row.id, add=True, now=NOW + timedelta(days=8))  # tapped a week later
+    assert "older than" in text
+    assert row.decision == "expired"
+    assert session.scalars(select(SourceRow)).all() == []
+
+
+async def test_non_owner_add_press_changes_nothing(
+    helix: Any, session: Session, settings: Settings, factory: Factory, engine: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from clipforge.config import load_settings
+    from clipforge.db import make_session_factory
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:fake-token-for-tests")
+    monkeypatch.setenv("TELEGRAM_OWNER_CHAT_ID", "111")
+    campaign(factory)
+    discover_vods(session, settings, client=HelixClient("cid", "secret"), now=NOW)
+    session.commit()
+    row_id = session.scalars(select(VodProposalRow)).first().id
+    deps = BotDeps(settings=load_settings(), factory=make_session_factory(engine), notifier=FakeNotifier(),
+                   clock=lambda: NOW)  # fmt: skip
+    update = make_update(999, keyboards.encode(keyboards.VOD_ADD, row_id), message_id=7)
+    await on_callback(update, make_context(deps))
+    update.callback_query.answer.assert_not_awaited()
+    session.expire_all()
+    assert session.get(VodProposalRow, row_id).decision == "pending"
+    assert session.scalars(select(SourceRow)).all() == []

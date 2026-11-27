@@ -247,6 +247,18 @@ def decide(session: Session, settings: Settings, proposal_id: int, *, add: bool,
         return f"VOD proposal {proposal_id} not found."
     if row.decision != "pending":
         return f"VOD proposal {proposal_id} was already {row.decision}."
+    camp = session.get(CampaignRow, row.campaign_id)
+    too_old = (
+        camp is not None
+        and camp.recent_vod_days
+        and row.vod_created_at is not None
+        and row.vod_created_at < now - timedelta(days=camp.recent_vod_days)  # the brief's "recent VODs only" rule
+    )
+    if add and too_old and camp is not None:
+        row.decision, row.decided_at = "expired", now
+        record_event(session, "vod_proposal", row.id, "pending", "expired", actor="operator",
+                     detail=f"older than {camp.recent_vod_days} days")  # fmt: skip
+        return f"Not registered: {row.url} is older than the campaign's {camp.recent_vod_days}-day window."
     if not add:
         row.decision, row.decided_at = "dismissed", now
         record_event(session, "vod_proposal", row.id, "pending", "dismissed", actor="operator")

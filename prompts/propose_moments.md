@@ -1,6 +1,6 @@
 ---
 name: propose_moments
-version: "1"
+version: "2"
 model_role: rank
 notes: Content-first moment finder (moments-v2). Haiku, forced tool `propose_moments`, one call per overlapping transcript segment. Variables $campaign_brief, $ranker_notes, $catalogue, $rejects, $rubric, $min_s, $target_min_s, $target_max_s, $max_s, $post_roll_s, $max_proposals, $segment_start_s, $segment_end_s, $transcript. The catalogue, rejects and rubric come from the campaign's moment profile (config/moment_profiles/).
 ---
@@ -36,6 +36,9 @@ an empty list is a good answer for a boring stretch. For each moment:
 - `archetype`: the catalogue entry that fits best, or `other`.
 - `confidence` (0 to 1): how sure you are that this is a clip strangers would watch to the end and send on.
 - `reason`: one line, at most 200 characters: what happens and why a stranger would care.
+
+Propose a moment that involves sexual or graphic content like any other (judge the moment itself): a human reviews
+every flagged clip, so never leave one out for that reason.
 
 $ranker_notes
 

@@ -262,7 +262,7 @@ def test_rank_moments_end_to_end(fake: FakeAnthropic, client: ClaudeClient, prof
         motion=MOTION,
         frames=frames_factory,
     )
-    assert result.prompt_version == "propose_moments@1+score_moments@2+judge_frames@1+clip_copy@3"
+    assert result.prompt_version == "propose_moments@2+score_moments@2+judge_frames@2+clip_copy@3"
     run = result.moment_run
     assert {e.moment.found_by for e in run.evaluated} >= {"content", "signals"}
     assert all(c.copy_ is None for c in result.candidates)  # copy comes later, for the night's picks only
