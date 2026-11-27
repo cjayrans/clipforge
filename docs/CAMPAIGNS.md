@@ -73,7 +73,9 @@ Everything campaign-specific is data. A new campaign is one JSON file plus its a
      footage: keep them on this machine, use them only to check the box, and delete them afterwards.
    - `allow_stream_download` (only when the rules say so), `stream_channels` (Twitch logins the footage may come
      from; a VOD is matched on its channel login, a clip on the channel's display name lowercased, so a clip from a
-     channel whose display name differs from its login is refused: the safe direction), `max_source_minutes` (download only the first N minutes), `source_urls`.
+     channel whose display name differs from its login is refused: the safe direction), `max_source_minutes` (download only the first N minutes; leave it out to scan the whole VOD),
+     `auto_propose_vods` + `recent_vod_days` (from a "recent VODs only" rule: the nightly job proposes new VODs of
+     `stream_channels` in Telegram; the operator taps Add to register one), `source_urls`.
    - Unknown numbers: `null` for `min_payout_usd`/`min_views_per_post` (stored as 0) and the optional ones; say what was
      not read in `rules_notes`.
 2. Put its assets in `campaigns/assets/<slug>/` (git-ignored: licensed to the operator for that campaign only; the
