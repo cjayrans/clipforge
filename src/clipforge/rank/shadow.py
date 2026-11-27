@@ -379,6 +379,7 @@ def shadow_rank(
     engine = make_engine(settings.database_url)
     factory = make_session_factory(engine)
     started_at = utcnow()
+    first_cost = 0
     stats = ShadowStats()
     scratch = settings.media_dir / "scratch" / f"shadow-{source_id}"
     stats.scratch = str(scratch)
@@ -452,13 +453,16 @@ def shadow_rank(
         )  # fmt: skip
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(text_out, encoding="utf-8")
-        if ledger_url:
-            n = _mirror_costs(factory, first_cost, ledger_url)
-            log.info("shadow-rank: %d cost row(s) appended to the ledger database", n)
         print(f"wrote {report}")
         return report
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+        if ledger_url:  # even after a failure: whatever was spent must reach the live ledger
+            try:
+                n = _mirror_costs(factory, first_cost, ledger_url)
+                print(f"shadow-rank: {n} cost row(s) appended to the ledger database")
+            except Exception:
+                log.exception("shadow-rank: could not append cost rows to the ledger database")
         engine.dispose()
 
 
