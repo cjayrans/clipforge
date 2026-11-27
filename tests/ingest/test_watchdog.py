@@ -145,3 +145,43 @@ def test_stalled_twitch_download_is_retried(tmp_path: Path, clock: FakeClock) ->
     path = twitch.download("https://www.twitch.tv/videos/1", tmp_path, "1", ytdl_factory=StallingYDL)
     assert path.read_bytes() == b"video"
     assert len(calls) == 3
+
+
+def test_a_retried_download_rechecks_the_channel_before_fetching(tmp_path: Path, clock: FakeClock) -> None:
+    """COMPLIANCE #1: every attempt checks the channel before any media is fetched, retries included."""
+    from clipforge.compliance import ComplianceError
+    from clipforge.ingest import twitch
+
+    calls: list[bool] = []
+
+    class FlakyYDL:
+        def __init__(self, opts: dict[str, Any]) -> None:
+            self.opts = opts
+
+        def __enter__(self) -> FlakyYDL:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+            calls.append(download)
+            attempt = calls.count(False)
+            if not download:  # the metadata now names another channel on the retry
+                return {"extractor_key": "TwitchVod", "uploader_id": "fakestreamer" if attempt == 1 else "someone"}
+            hook = self.opts["progress_hooks"][0]
+            hook({"status": "downloading", "downloaded_bytes": 5})
+            clock.offset += watchdog.STALL_S + 1
+            hook({"status": "downloading", "downloaded_bytes": 5})
+            raise AssertionError("unreachable")
+
+    with pytest.raises(ComplianceError, match="someone"):
+        twitch.download("https://www.twitch.tv/videos/1", tmp_path, "1", ytdl_factory=FlakyYDL,
+                        channels=["fakestreamer"])  # fmt: skip
+    assert calls == [False, True, False]  # attempt 2 was refused at the metadata check, before any media
+
+
+def test_a_step_outside_any_stage_has_a_ceiling(clock: FakeClock, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(watchdog, "DEFAULT_STEP_CEILING_S", 0.5)
+    with pytest.raises(watchdog.StageTimeout, match="outside a stage"):
+        watchdog.run_watched(py("import time\nwhile True: print('x', flush=True); time.sleep(0.05)"), poll_s=0.1)

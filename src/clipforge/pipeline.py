@@ -948,7 +948,10 @@ class Pipeline:
             if self.target_reached:
                 self.report.stopped_early = True
                 return
-            self._isolated("render", f"candidate {cand_id}", lambda c=cand_id: self._render(c))
+            try:
+                self._isolated("render", f"candidate {cand_id}", lambda c=cand_id: self._render(c))
+            except watchdog.WatchdogError as exc:  # a stalled step in Phase B fails the candidate, not the night
+                self._render_failed(cand_id, exc)
 
     def _render_inputs(self, s: Session, cand: CandidateRow) -> _RenderInputs:
         src = s.get(SourceRow, cand.source_id)

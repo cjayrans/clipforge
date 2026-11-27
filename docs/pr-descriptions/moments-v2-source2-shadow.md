@@ -1,6 +1,6 @@
 # Shadow rank of source 2 (gta6-streamer-v2)
 
-Run 2026-11-27 01:13 UTC. Source 4.77 h, 25,118 transcript words. No candidates were written.
+Run 2026-11-27 14:20 UTC. Source 4.77 h, 24,887 transcript words. No candidates were written.
 
 ## Top 10 with the new logic
 
@@ -8,31 +8,40 @@ Scores are hook arc arousal sendability clarity density (0-10). Found by: conten
 
 | # | window | score | archetype | scores | found by | frames | what happens |
 |---|---|---|---|---|---|---|---|
-| 1 | 4:15:58-4:16:41 (43s) | 61 | chaos | 6 5 7 7 5 6 | both | mixed EPR | Tiger attacks mid-theft, he loses $1,000 and dies, then rants 'a tiger killed me' in disbelief. Strong, quotable overreaction a stranger gets fast. |
-| 2 | 4:16:51-4:17:22 (30s) | 60 | other | 6 6 7 6 4 6 | content | gameplay EPR | Near-death 1 HP clutch after a tiger kill; he repeats 'I did it' in disbelief and hypes Lucia. Clear win payoff, and the setup is partly visible from the prior rant. |
-| 3 | 1:47:16-1:47:56 (40s) | 58 | chaos | 6 6 6 6 5 5 | both | - | Stolen ambulance, birds diving oddly, then he ignites the ambulance with 'That was sick.' Visual payoff; needs some context on the ambulance setup. |
-| 4 | 1:30:11-1:30:52 (41s) | 57 | chaos | 6 5 6 6 6 5 | content | gameplay EPR | Streamer panics as a cop attacks, gets busted and loses money; 'why is he attacking me' is quotable and escalates fast, though the window runs long. |
-| 5 | 2:52:06-2:52:48 (41s) | 55 | chaos | 5 6 6 5 5 6 | both | - | Heist grab then panicked sprint out with one heart left; relieved 'we escaped' payoff. Needs trimming to ~30s and the bag setup is partly unclear to a stranger. |
-| 6 | 1:39:53-1:40:39 (45s) | 54 | npc_absurd | 5 5 6 6 5 5 | content | - | Argument with a cop over trespassing, apologizing to the NPC; absurd and funny, but the context needed for the trespassing setup is heavy. |
-| 7 | 1:04:07-1:04:34 (27s) | 53 | glitch | 6 5 6 5 4 5 | both | - | Hit by a train then a hostile vehicle crashes after he juked it; funny escalation but transcript is garbled and the payoff runs past the window. |
-| 8 | 2:49:08-2:49:39 (31s) | 53 | blunder | 6 5 5 6 4 5 | content | - | Streamer runs over a gnome, radio reports hit-and-run, he says 'that is not us'; deadpan and quotable, needs slight context. |
-| 9 | 1:32:29-1:32:58 (30s) | 52 | chaos | 5 5 6 5 5 5 | signals | - | Driving gets picked off and he escalates to 'I'm getting pissed'; relatable rage and a funny tone, though the stakes are only partly visible. |
-| 10 | 1:04:43-1:05:00 (18s) | 52 | chaos | 5 5 6 5 5 5 | signals | - | Streamer juking a vehicle then a Tom and Jerry crash and 'what the hell' reaction; funny voice reactions, but the setup relies on earlier chase context. |
+| 1 | 2:30:02-2:30:33 (31s) | 67 | blunder | 6 7 7 7 7 6 | both | gameplay EPR | Busted mid-escape, then 'I should have just laid low bro' and 'I got wasted, nope'; deadpan regret that a stranger can follow. |
+| 2 | 3:21:54-3:22:37 (42s) | 62 | blunder | 5 7 6 7 6 6 | content | gameplay EPR | Cops report the stolen car instantly, then he finds a tracker and spirals with 'damn it has a tracker'. Relatable loss with a clear escalation. |
+| 3 | 1:47:20-1:47:56 (36s) | 61 | blunder | 5 6 7 7 5 6 | both | gameplay EPR | Shoots a gas can mid-chase, igniting the scene; 'That was sick' is a payoff, but the setup about birds and the ambulance is scattered and hard to follow cold. |
+| 4 | 3:48:19-3:48:46 (27s) | 59 | blunder | 6 6 6 6 6 5 | both | mixed EPR | Walks into a store full of armed guards, panics, and calls himself stupid after losing money. Relatable blunder with a clear reaction. |
+| 5 | 0:09:58-0:10:25 (27s) | 59 | npc_absurd | 5 6 6 7 5 6 | content | gameplay EPR | Streamer tries to pawn/loan against a necklace, NPC accepts collateral, streamer deadpans 'very reasonable'. Funny bit, but the setup needs some lead-in and the clip runs long. (= old clip 24) |
+| 6 | 1:14:40-1:15:02 (22s) | 58 | chaos | 5 6 7 6 5 5 | both | gameplay EPR | Fight flips from 'he's on top' to 'You saw that?' and 'hell yeah'. Quick reversal a stranger can follow, but the clip runs long after payoff. |
+| 7 | 2:53:56-2:54:30 (35s) | 55 | chaos | 5 5 6 6 6 5 | content | gameplay EP | Police radio says no eyes on the suspect car while he escapes yelling 'we out'. Tense and funny, but the escape is slow to pay off. |
+| 8 | 2:34:38-2:35:04 (26s) | 54 | chaos | 5 6 5 5 6 6 | signals | gameplay EPR | Sneaking up on a crowd and taking people out with escalating loud reactions; a stealth bit that pays off with a knockout, though the transcript is garbled. |
+| 9 | 2:51:43-2:52:19 (37s) | 51 | chaos | 4 5 6 6 4 5 | both | gameplay EPR | Heist grab turns into panicked escape with 'we got our bag, our $400, I just want fun'; escalation and relief land, though the setup is needed and it runs long. |
+| 10 | 1:12:03-1:12:22 (19s) | 51 | chaos | 5 5 6 5 4 5 | signals | gameplay EPR | Mid-fight a woman pulls a knife, 'Oh my god, she got a knife!', and he loses help; a sudden spike, though the 'my bad' lead-in is unclear. |
 
 ## Clips picked before
 
 Scored with v1 (reaction/event/setup/absurdity).
 
-| clip | state | window | score | archetype | v1 scores | hook | in new top 10? |
-|---|---|---|---|---|---|---|---|
-| 24 | pending_review | 0:10:05-0:10:23 | 59 | npc_weirdness | 6/6/5/7 | He holds your necklace until you pay up | no |
-| 25 | pending_review | 0:35:21-0:35:35 | 55 | blunder | 6/5/5/6 | How did he end up here without a | no |
-| 26 | pending_review | 0:42:06-0:42:29 | 55 | blunder | 6/5/5/6 | Boeshi GPS is completely broken | no |
-| 27 | pending_review | 0:57:46-0:57:58 | 55 | shock | 6/5/5/6 | Is that a roadkill? Oh my gosh, no | no |
-| 28 | pending_review | 0:42:26-0:42:52 | 52 | chaos | 6/5/4/6 | I'm not drifting! (The car disagrees) | no |
-| 29 | pending_review | 0:56:57-0:57:14 | 52 | npc_weirdness | 5/5/5/6 | Boeshi questions if the NPCs are real | no |
-| 30 | pending_review | 0:26:10-0:26:38 | 48 | blunder | 5/5/4/5 | Boeshi calls his own driving insane | no |
-| 31 | pending_review | 0:08:21-0:08:33 | 48 | blunder | 5/5/4/5 | When the task is right there and you | no |
+| clip | state | window | score | archetype | v1 scores | hook | in new top 10? | new judgement of that window |
+|---|---|---|---|---|---|---|---|---|
+| 24 | pending_review | 0:10:05-0:10:23 | 59 | npc_weirdness | 6/6/5/7 | He holds your necklace until you pay up | #5 | 59 [npc_absurd] 5 6 6 7 5 6; picked; Streamer tries to pawn/loan against a necklace, NPC accepts collateral, streamer deadpans 'very reasonable'. Funny bit, but the setup needs some lead-in and the clip runs long. |
+| 25 | pending_review | 0:35:21-0:35:35 | 55 | blunder | 6/5/5/6 | How did he end up here without a | no | 50 [glitch] 6 4 6 5 4 4; below the top 10; Sudden 'what the- oh my god!' reaction to an unexplained event, probably a crash or teleport; a stranger lacks the setup to know why it is funny. |
+| 26 | pending_review | 0:42:06-0:42:29 | 55 | blunder | 6/5/5/6 | Boeshi GPS is completely broken | no | 42 [other] 4 4 5 4 4 4; below the top 10; Confused driving to a gun range, 'what is going on bruh', then 'oh my gosh' at a wrong turn; relatable frustration, but mostly navigation with no clear event. |
+| 27 | pending_review | 0:57:46-0:57:58 | 55 | shock | 6/5/5/6 | Is that a roadkill? Oh my gosh, no | no | 38 [other] 4 3 4 4 5 3; min_score: 38 (min 40); Streamer spots roadkill and says poor pig bro. Mild absurd beat with a light reaction, but the payoff is weak and the rest is garbled chat talk. |
+| 28 | pending_review | 0:42:26-0:42:52 | 52 | chaos | 6/5/4/6 | I'm not drifting! (The car disagrees) | no | 42 [blunder] 4 4 4 5 4 4; below the top 10; Wrong-turn rant blaming the game, then admitting he should have read the sign. Relatable but low-energy and needs the route context. |
+| 29 | pending_review | 0:56:57-0:57:14 | 52 | npc_weirdness | 5/5/5/6 | Boeshi questions if the NPCs are real | no | not proposed by either finder |
+| 30 | pending_review | 0:26:10-0:26:38 | 48 | blunder | 5/5/4/5 | Boeshi calls his own driving insane | no | 49 [glitch] 5 5 5 6 3 4; below the top 10; Car changes and the streamer deadpans 'She no more F-Machine'; funny to fans, but the joke needs context a stranger won't have. |
+| 31 | pending_review | 0:08:21-0:08:33 | 48 | blunder | 5/5/4/5 | When the task is right there and you | no | not proposed by either finder |
+
+## Clip length
+
+Target 15-30 s, hard cap 45 s.
+
+| set | n | median | p90 | over 30 s |
+|---|---|---|---|---|
+| top 10 | 10 | 28.8 s | 36.5 s | 50% |
+| every kept candidate | 74 | 21.9 s | 36.5 s | 28% |
 
 ## Score distribution by archetype
 
@@ -40,43 +49,63 @@ Weighted score before skip-rule penalties, every scored candidate. Kept = passed
 
 | archetype | scored | kept | mean | median | min | max | found by |
 |---|---|---|---|---|---|---|---|
-| chaos | 10 | 8 | 50 | 52 | 37 | 61 | both 4, content 2, signals 4 |
-| bit | 4 | 4 | 48 | 50 | 42 | 51 | both 1, content 2, signals 1 |
-| npc_absurd | 4 | 3 | 47 | 48 | 39 | 54 | both 1, content 3 |
-| glitch | 3 | 2 | 46 | 50 | 34 | 53 | both 2, content 1 |
-| blunder | 6 | 5 | 45 | 46 | 32 | 53 | both 2, content 3, signals 1 |
-| other | 13 | 6 | 39 | 40 | 20 | 60 | both 4, content 2, signals 7 |
+| chaos | 28 | 20 | 48 | 48 | 32 | 77 | both 12, content 3, signals 13 |
+| blunder | 21 | 16 | 47 | 46 | 33 | 67 | both 7, content 2, signals 12 |
+| bit | 22 | 14 | 45 | 45 | 31 | 61 | both 6, content 5, signals 11 |
+| glitch | 7 | 5 | 44 | 44 | 37 | 50 | both 4, content 2, signals 1 |
+| npc_absurd | 12 | 7 | 44 | 46 | 30 | 59 | both 3, content 7, signals 2 |
+| discovery | 2 | 1 | 40 | 40 | 32 | 49 | signals 2 |
+| other | 54 | 11 | 35 | 34 | 20 | 61 | both 8, content 6, signals 40 |
+| chat_interplay | 4 | 0 | 34 | 34 | 32 | 38 | both 1, content 1, signals 2 |
 
-Dropped by gate: skip_rules 4, content 6, min_score 2.
+Dropped by gate: brief 1, skip_rules 14, content 38, window 5, min_score 18.
 
 ## The 10 best windows that were discarded
 
 | window | raw score | archetype | scores | found by | why | what happens |
 |---|---|---|---|---|---|---|
-| 2:53:46-2:54:30 | 51 | chaos | 4 5 6 6 4 5 | both | below the top 10 | Stuck in traffic while police radio says no eyes on suspect; frantic escape with comedic radio line. Long window, the escape payoff is readable. |
-| 1:57:40-1:58:15 | 51 | npc_absurd | 5 5 5 6 4 5 | content | below the top 10 | Rent-collecting NPC keeps saying 'accountability' and 'we'll see' in a sweetly menacing way; the deadpan bit reads well and is quotable. |
-| 0:59:20-1:00:04 | 51 | bit | 5 5 5 6 4 5 | content | below the top 10 | Mock-apologetic robbery monologue then hands-up payoff; a fun voice bit, but clip runs long and the robbery needs some context. |
-| 2:36:40-2:37:20 | 51 | other | 5 4 6 6 4 5 | content | content: no clear payoff | SWAT standoff with deadpan 'they can't see me' repeats; funny but audio is garbled and the payoff is unclear. |
-| 4:05:08-4:05:43 | 50 | bit | 6 5 4 6 4 4 | both | below the top 10 | Self-deprecating 'I got older, got tighter' bit with chat accusing bots; relatable, but the setup is garbled and depends on chat context. |
-| 1:01:00-1:01:40 | 50 | glitch | 5 5 5 5 5 5 | content | below the top 10 | Waypoint distance jumps from 2.5 to 3.12 miles mid-drive; the streamer's disbelief is funny, but the setup is long and the payoff is a small beat. |
-| 0:09:57-0:10:28 | 49 | bit | 5 5 4 6 4 5 | content | below the top 10 | NPC pawnbroker asks for collateral, and the streamer deadpans 'that's actually a very fair trade' and hypes the reasonable woman. A clear voice-joke bit that is easy to follow. |
-| 2:10:15-2:10:45 | 47 | blunder | 4 5 5 5 5 4 | both | below the top 10 | Shooting through a stairway fails, then 'Fudge! Fudge!' panic. Small relatable fail, but the setup is muddled and the payoff is weak. |
-| 3:47:55-3:48:38 | 47 | blunder | 4 5 5 5 4 5 | content | below the top 10 | Walks into a shop that has guns, then 'I'm so stupid, I lost money.' Relatable self-own with a clear setup and payoff, though slightly long. |
-| 1:12:05-1:12:22 | 47 | other | 5 4 5 6 3 4 | signals | below the top 10 | 'What, oh my god she got a knife, okay I got less help' is a funny beat, but the teammate context is thin for a stranger. |
+| 4:15:52-4:17:01 | 77 | chaos | 8 7 8 8 8 7 | both | window: extended to the payoff at 15420.2s; over the 30s target | Tiger attacks mid-money-grab; 'I'm losing $1,000 from a freaking tiger' is a quotable rant with a clear hook and escalating anger. |
+| 4:16:37-4:17:23 | 61 | other | 6 6 8 6 4 5 | content | window: over the 30s target | Tiger killed him, then he survives at one HP and chants 'I did it' in hype. Loud and energetic, but the tiger setup is missing from the window so it is hard to follow cold. |
+| 0:59:20-1:00:25 | 61 | bit | 6 6 6 7 5 6 | content | window: extended to the payoff at 3623.8s; started at the first beat (3561.0s); over the 30s target | Deadpan robbery roleplay with a formal apology before the crime, then 'money let's go'; funny voice bit but runs long and setup is muddled. |
+| 2:25:02-2:25:31 | 57 | chaos | 6 5 7 5 5 6 | both | content: no clear payoff | Heist goes bad with 'Officer down' and a panicked chase, then a save attempt. Escalation is clear, but the outcome is unclear and context is thin. |
+| 1:57:45-1:58:42 | 54 | bit | 6 5 5 6 5 5 | content | window: extended to the payoff at 7120.8s; over the 30s target | Deadpan rent-paying bit with a clerk getting 'accountability' talk, then a Kelly County tip line payoff; funny but the payoff sits past the window. |
+| 4:24:30-4:25:00 | 53 | chaos | 5 5 7 5 4 5 | content | content: no clear payoff | Heist with cops closing in and repeated 'I did it' hype. Escalation is visible but the payoff is unclear without the heist context. |
+| 1:30:15-1:30:49 | 51 | chaos | 5 5 6 5 4 5 | both | below the top 10 | Cop chase escalates into a shootout with rapid-fire lines and 'Busted, what for'; chaotic but the lines are hard to parse cold. |
+| 3:20:09-3:20:26 | 51 | chaos | 5 5 6 5 4 5 | both | content: no clear payoff | Claims a red car and 'what the hell' turns to a 'Motherfucker!' pivot, but the wrong turn is not visible in the transcript; payoff unclear. |
+| 4:29:09-4:29:37 | 51 | blunder | 5 5 5 6 4 5 | both | below the top 10 | Repeated 'My bad' then 'Gosh darn it. Are you serious?' after a mishap blocks going home; relatable frustration, though the mishap itself is unclear. |
+| 1:00:45-1:01:09 | 51 | chaos | 5 5 6 5 4 5 | both | below the top 10 | Robbery goes from 'we're unknown' to 'they after us' panic then 'no one saw me' relief; short and punchy, needs the setup. |
 
 ## Spend and resources
 
 | stage | USD |
 |---|---|
-| content | 0.0257 |
-| score | 0.0091 |
+| content | 0.0255 |
+| score | 0.0340 |
 | transcribe | 0.1956 |
-| vision | 0.0112 |
-| **total** | **0.2415** |
+| vision | 0.0212 |
+| **total** | **0.2764** |
 
-Keyframe check: 12 candidate(s), 119 image(s), $0.0112 ($0.0009 per candidate).
+Vision coverage: 10 of 10 final picks checked.
 
-Run detail: moments (gta6-streamer-v2):; content pass: 29 segment(s), 29 call(s), 0 without speech, 106 proposal(s) (0 invalid), 99 after dedupe; signals: 1277 trigger(s), 1394 reaction(s), 691 paired, 194 reaction-only hint(s), 586 trigger(s) with no reaction, 362 overlap(s) dropped, 40 signal candidate(s) (signals: transcript, loudness, motion); merged 40 candidate(s) (13 content, 13 signals, 14 both), 0 overlapping used footage; dropped by gate: 4 skip_rules, 6 content, 2 min_score; vision: 12 checked (119 images, $0.0112, $0.0009/candidate); 10 picked
+Keyframe check: 23 candidate(s), 226 image(s), $0.0212 ($0.0009 per candidate).
 
-Full VOD download: 12.30 GB; disk free 770.9 GB before, 744.9 GB after (about 25.96 GB used); scratch deleted afterwards.
-Processing time: download 13.4 min, transcribe 3.8 min, signals 5.7 min, rank (content pass, scoring, vision) 4.4 min.
+Run detail: moments (gta6-streamer-v2):; content pass: 29 segment(s), 29 call(s), 0 without speech, 107 proposal(s) (0 invalid), 102 after dedupe; signals: 1279 trigger(s), 1377 reaction(s), 694 paired, 192 reaction-only hint(s), 585 trigger(s) with no reaction, 367 overlap(s) dropped, 150 signal candidate(s) (signals: transcript, loudness, motion); merged 150 candidate(s) (26 content, 83 signals, 41 both), 0 overlapping used footage; dropped by gate: 1 brief, 14 skip_rules, 38 content, 5 window, 18 min_score; vision: 23 checked (226 images, $0.0212, $0.0009/candidate); 10 picked
+
+Full VOD download: 12.30 GB; disk free 744.5 GB before, 745.7 GB after (about 0.00 GB used); scratch deleted afterwards.
+Processing time: download 9.0 min, transcribe 3.7 min, signals 5.8 min, rank (content pass, scoring, vision) 7.6 min.
+
+## Notes on this run (added by hand)
+
+- **Run conditions:** final code (commit e8fbf29) in a one-off container on a copy of the database, under
+  `caffeinate -dimsu` with a 90 min wall-clock cap.
+- **Wall time:** 14:20:42-14:46:51 UTC, 26 min. That includes copying the database and starting the container.
+- **Peak disk:** the "about 0.00 GB used" line above is wrong.
+  - **Why:** free space read through the macOS bind mount went *up* during the download (APFS purgeable space), so
+    this run measured nothing useful.
+  - **Best estimate:** the file is 12.30 GB, and yt-dlp writes a second, remuxed copy before deleting the first. The
+    first run measured about 26 GB on the same VOD, so the peak is about 2x the file size, roughly 25 GB.
+- **Best moment dropped:** the best-scoring window of the VOD, the tiger rant (raw 77), was dropped by the `window`
+  gate.
+  - **Why:** Haiku put its payoff 69 s after the start. The rule drops a moment that cannot fit 45 s from its first
+    beat to its payoff, rather than cutting it.
+  - **Earlier run:** the first run kept a 43 s version of the same moment at #1.

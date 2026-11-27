@@ -143,7 +143,7 @@ def download(
         opts["progress_hooks"] = [guard.hook]
         try:
             with factory(opts) as ydl:
-                if attempt == 0 and (channels or disk_check is not None):
+                if channels or disk_check is not None:  # every attempt: checked before any media is fetched
                     meta = ydl.extract_info(url, download=False)
                     if not isinstance(meta, dict):
                         raise DownloadError("yt-dlp returned no info")

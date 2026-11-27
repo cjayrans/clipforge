@@ -51,8 +51,9 @@ Weighted score = 10 × Σ weight × score.
 
 - Open on the most interesting beat a stranger can still follow; the hook text gives the context.
 - At most 0.6 s of dead air at the start.
-- End at most 1.5 s after the payoff.
-- Aim for 15-30 s, with 12 s minimum and 45 s hard cap.
+- End exactly 1.5 s after the payoff, on a word edge only if it's within 0.4 s.
+- Aim for 15-30 s, with 12 s minimum and 45 s hard cap. A clip over 30 s starts at the ranker's first beat
+  (`first_beat_s`, `score_moments@3`).
 - If the payoff runs past the window, the window is **extended**. A moment that can't fit 45 s is dropped, never cut.
 
 **Kept from v1:**
@@ -112,18 +113,55 @@ Weighted score = 10 × Σ weight × score.
   and no unrendered candidate. Unrendered candidates expire 3 days after ranking. FAILED sources keep their file for
   `cf source retry`, and the 7-day purge stays as the backstop.
 
-**Full-VOD numbers (source 2, 4.77 h):**
+**Full-VOD numbers (source 2, 4.77 h, final code):**
 
 | | |
 |---|---|
-| Download | 12.30 GB in 13.4 min |
-| Peak disk | about 26 GB (yt-dlp remuxes to a second temp file) |
-| Transcribe | 3.8 min, 10 Groq chunks, $0.20 |
-| Signals | 5.7 min |
-| Content pass, scoring and vision | about 4.4 min |
-| Total spend | **$0.24** (first run) |
+| Download | 12.30 GB in 9.0 min |
+| Peak disk | about 25 GB (yt-dlp writes a remuxed second copy; see 10) |
+| Transcribe | 3.7 min, $0.20 |
+| Signals | 5.8 min |
+| Content pass, scoring and vision | 7.6 min |
+| Total | 26 min wall time, $0.28 |
 
 `RunReport` now prints one line per source with file size, free disk, stage times and spend.
+
+## 6b. Why the second run failed, and the stall watchdog
+
+**Diagnosis**, from `pmset -g log` and the container and worker logs:
+
+- **01:52 UTC:** the Amphetamine single-use session released its "prevent system sleep" assertion.
+- **01:58:39 UTC:** the Mac entered idle sleep, 13 min into the run.
+- **13:20:06 UTC:** the Mac woke (lid open).
+- **The same second:** the fixed 4 h ffmpeg timeout fired. The clock had jumped 11 h while the Docker VM was paused,
+  so a healthy audio extraction was killed the moment the machine woke.
+
+So it was not slow Twitch, and not a code bug in the pipeline steps. The fixed timeout made it worse by counting
+sleep as runtime. The **live worker** was hit too: it logged `nightly_pipeline`, `purge_sources` and `backup_db` as
+"missed by 7:20" on wake, so **last night's run did not happen**.
+
+**Fix** (`ingest/watchdog.py`):
+
+- **Active time.** Time is counted by a ticker thread that skips host sleep and VM pauses.
+- **ffmpeg.** Every ffmpeg call through `media.run` reports `-progress`. With no output growth for 10 min of active
+  time, the step is killed and retried, at most 2 retries.
+- **Twitch download.** A progress hook checks for no new bytes for 10 min, and retries the download with the
+  channel, live and disk checks run again first.
+- **Stage ceilings** of active time, about 3x the first full-VOD run:
+
+  | stage | ceiling |
+  |---|---|
+  | download | 40 min |
+  | transcribe | 15 min |
+  | rank | 35 min |
+  | copy | 10 min |
+  | whole source | 90 min |
+
+  Groq and Claude calls check the ceiling before each request.
+- **Failure handling.** A stall or ceiling marks the source FAILED, with an alert asking for `cf source retry`.
+  Phase A starts a new source only within a 60 min budget, so a night's ranking can't run for hours.
+- **Tests:** a simulated 11 h sleep counts as one tick; a silent step is retried then fails; the ceiling kills a
+  running step; a stalled download is retried; a stage timeout fails the source while the night goes on.
 
 ## 7. Chunk-boundary safety
 
@@ -189,87 +227,87 @@ Weighted score = 10 × Σ weight × score.
   platform, with n per cell.
 - **The Telegram preview** shows the six scores, found_by, the frames verdict and the CHECK BEFORE APPROVING line.
 
-## 10. Source 2 with the new logic
+## 10. Source 2 with the final code
 
 This is the full report from `cf source shadow-rank 2 --full --compare-clips 24-31`:
-[moments-v2-source2-shadow.md](moments-v2-source2-shadow.md). It ran in a one-off container on a copy of the
-database, and wrote no candidates.
-
-**Caveat:** this run came before the last commit. In it, only the 12 shortlisted candidates were vision-checked (some
-picks show "-" under frames), and the candidate pool was capped at 40 (59 of the 99 content proposals were never
-scored). A second run with the final logic failed (see below).
+[moments-v2-source2-shadow.md](moments-v2-source2-shadow.md). It ran on 27 Nov, 14:20-14:46 UTC, in a one-off
+container on a copy of the database, under `caffeinate -dimsu` with a 90 min wall-clock cap. No candidates were
+written.
 
 **Top 10, with the six scores in order hook arc arousal sendability clarity density:**
 
 | # | window | score | archetype | scores | found by | what happens |
 |---|---|---|---|---|---|---|
-| 1 | 4:15:58 (43 s) | 61 | chaos | 6 5 7 7 5 6 | both | a tiger attacks mid-theft, he dies and rants "a tiger killed me" |
-| 2 | 4:16:51 (30 s) | 60 | other | 6 6 7 6 4 6 | content | a 1 HP clutch after the tiger; he repeats "I did it" in disbelief |
-| 3 | 1:47:16 (40 s) | 58 | chaos | 6 6 6 6 5 5 | both | a stolen ambulance, birds dive, he sets it on fire: "that was sick" |
-| 4 | 1:30:11 (41 s) | 57 | chaos | 6 5 6 6 6 5 | content | a cop attacks him, he gets busted: "why is he attacking me" |
-| 5 | 2:52:06 (41 s) | 55 | chaos | 5 6 6 5 5 6 | both | a heist grab, then a sprint out on one heart: "we escaped" |
-| 6 | 1:39:53 (45 s) | 54 | npc_absurd | 5 5 6 6 5 5 | content | he argues with a cop over trespassing and apologises to the NPC |
-| 7 | 1:04:07 (27 s) | 53 | glitch | 6 5 6 5 4 5 | both | hit by a train, then a chasing car crashes after he jukes it |
-| 8 | 2:49:08 (31 s) | 53 | blunder | 6 5 5 6 4 5 | content | he runs over a gnome; the radio reports a hit-and-run: "that is not us" |
-| 9 | 1:32:29 (30 s) | 52 | chaos | 5 5 6 5 5 5 | signals | he keeps getting picked off: "I'm getting pissed" |
-| 10 | 1:04:43 (18 s) | 52 | chaos | 5 5 6 5 5 5 | signals | a car-dodging chase ends in a cartoon crash: "what the hell" |
+| 1 | 2:30:02 (31 s) | 67 | blunder | 6 7 7 7 7 6 | both | busted mid-escape: "I should have just laid low bro" |
+| 2 | 3:21:54 (42 s) | 62 | blunder | 5 7 6 7 6 6 | content | the stolen car has a tracker; he spirals |
+| 3 | 1:47:20 (36 s) | 61 | blunder | 5 6 7 7 5 6 | both | he shoots a gas can mid-chase: "that was sick" |
+| 4 | 3:48:19 (27 s) | 59 | blunder | 6 6 6 6 6 5 | both | he walks into a store full of armed guards, panics, loses money |
+| 5 | 0:09:58 (27 s) | 59 | npc_absurd | 5 6 6 7 5 6 | content | the necklace-collateral NPC ("very reasonable"); **= old clip 24** |
+| 6 | 1:14:40 (22 s) | 58 | chaos | 5 6 7 6 5 5 | both | a fight flips: "you saw that? hell yeah" |
+| 7 | 2:53:56 (35 s) | 55 | chaos | 5 5 6 6 6 5 | content | the police radio has no eyes on him as he escapes: "we out" |
+| 8 | 2:34:38 (26 s) | 54 | chaos | 5 6 5 5 6 6 | signals | he sneaks up on a crowd and knocks people out |
+| 9 | 2:51:43 (37 s) | 51 | chaos | 4 5 6 6 4 5 | both | a heist grab turns into a panicked escape |
+| 10 | 1:12:03 (19 s) | 51 | chaos | 5 5 6 5 4 5 | signals | "oh my god, she got a knife!" |
 
-**Clips picked before (24-31).** None of them is in the new top 10.
+**Vision coverage:** all 10 final picks were checked. 23 candidates and 226 images in total, $0.0009 per candidate.
 
-- All eight come from the first hour: 0:08-0:58. That was all v1 ever saw, because of `max_source_minutes: 60`.
-- The new top 10 spans 1:04-4:17. Eight of the ten were found by the content pass alone or together with signals; only two came from signals alone.
-- The best window in the first hour under v2 is the NPC "collateral / very fair trade" bit at 0:09:57, with raw score
-  49. It is the same scene as old clip 24 ("He holds your necklace until you pay up"), and it ranked below the top
-  10.
+**Old clips 24-31:**
 
-**Score distribution, every scored candidate:**
+- Clip 24 is #5 (the same scene).
+- Clips 25, 26, 28 and 30 now score 42-50: below the top 10.
+- Clip 27 scores 38, under min_score.
+- Clips 29 and 31 were not proposed by either finder.
+
+**Clip length (target 15-30 s):**
+
+| set | median | p90 | over 30 s |
+|---|---|---|---|
+| top 10 | 28.8 s | 36.5 s | 50% |
+| all 74 kept | 21.9 s | 36.5 s | 28% |
+
+The first run was 6 of 10 at 40-45 s. Tightening the end to payoff + 1.5 s and starting long clips at the first beat
+helped, but half the top 10 still run over 30 s.
+
+**Score distribution:** 150 candidates were scored (26 content, 83 signals, 41 both).
 
 | archetype | n | kept | mean | max |
 |---|---|---|---|---|
-| chaos | 10 | 8 | 50 | 61 |
-| bit | 4 | 4 | 48 | 51 |
-| npc_absurd | 4 | 3 | 47 | 54 |
-| glitch | 3 | 2 | 46 | 53 |
-| blunder | 6 | 5 | 45 | 53 |
-| other | 13 | 6 | 39 | 60 |
+| chaos | 28 | 20 | 48 | 77 |
+| blunder | 21 | 16 | 47 | 67 |
+| bit | 22 | 14 | 45 | 61 |
+| glitch | 7 | 5 | 44 | 50 |
+| npc_absurd | 12 | 7 | 44 | 59 |
+| other | 54 | 11 | 35 | 61 |
+| chat_interplay | 4 | 0 | 34 | 38 |
+| discovery | 2 | 1 | 40 | 49 |
 
-- Dropped: 4 by skip rules, 6 by the content gate (no clear trigger or payoff), 2 under min_score 40.
-- The new scale runs lower than v1: the top score is 61, and most candidates fall between 45 and 55. **I left
-  `min_score` at 40.** At 40, 28 of 40 candidates were kept. At 50, at least 15 would be (the 10 picks plus the 5 discarded windows scoring 50-51).
+- Dropped by gate: 38 content (no clear trigger or payoff), 18 min_score, 14 skip rules, 5 window, 1 brief.
+- `min_score` is still 40.
 
-**The 10 best discarded windows** have raw scores 47-51, and are listed with reasons in the report. Nine were simply
-below the top 10:
+**Two problems you should know about:**
 
-- a rent-collecting NPC repeating "accountability"
-- a mock-apologetic robbery monologue
-- a waypoint distance jumping mid-drive
-- a "Fudge! Fudge!" stairway fail
-- a self-own in a gun shop
-- and others
+1. **The best moment of the VOD was dropped.** The tiger rant (raw score 77) failed the `window` gate. Haiku set
+   its payoff 69 s after its first beat, and the rule drops a moment that can't fit 45 s rather than cutting it. The
+   first run kept a 43 s version of the same moment at #1. I did not change this after the run, so the report
+   matches the code. The fix is your call: either cap such a moment at 45 s from its first beat and end it at a
+   pause, or keep dropping it.
+2. **The peak-disk measurement is unreliable on the Mac.** Free space read through the bind mount rose during the
+   download (APFS purgeable space). The real peak is about 2x the file size, roughly 25 GB, because yt-dlp writes a
+   second, remuxed copy; the first run measured 26 GB.
 
-The one gate drop was a SWAT standoff (`content: no clear payoff`).
+**Spend and wall time (4.77 h VOD):**
 
-**Observed issue:** windows tend toward the 45 s cap (6 of the top 10 are 40-45 s), despite the 15-30 s target.
-The arc score covers length, but nothing enforces it. It's worth watching in the first reviews.
+| stage | wall time | USD |
+|---|---|---|
+| download (12.30 GB) | 9.0 min | - |
+| transcribe (10 Groq chunks) | 3.7 min | 0.196 |
+| signals | 5.8 min | - |
+| content pass (29 calls) | 7.6 min (content pass, scoring and vision together) | 0.026 |
+| scoring (150 candidates) | (included above) | 0.034 |
+| vision | (included above) | 0.021 |
+| **total** | **26 min** | **$0.276** |
 
-**Spend:**
-
-| stage | USD |
-|---|---|
-| Groq transcription (4.77 h) | 0.196 |
-| content pass, 29 calls | 0.026 |
-| scoring | 0.009 |
-| vision, 12 candidates and 119 images | 0.011 ($0.0009 per candidate) |
-| **total** | **$0.24** |
-
-All 102 cost rows were appended to the live ledger.
-
-**Second run (final logic) failed.** It started 27 Nov 01:45 UTC. This time the Twitch download took hours, and then
-audio extraction of that file hit the new 4 h ffmpeg timeout (13:20 UTC). Nothing was spent, and the scratch footage
-was deleted. I don't know the cause: a slow download leaving a bad file is my best guess.
-
-A real risk follows from it: a hung ffmpeg pass can now hold a nightly run for up to 4 h. I did not re-run it a third
-time; say if you want it.
+All 152 cost rows were appended to the live ledger.
 
 ## Contract and config changes (CLAUDE.md: noted explicitly)
 
@@ -297,6 +335,9 @@ time; say if you want it.
 3. **Confirm `recent_vod_days: 7`.** The brief says only "recent VODs", so 7 is my guess; Add re-checks it at tap
    time.
 4. Rebuild the image and restart (`make up`). I did not do this.
+5. Last night's nightly run, purge and backup were missed: the Mac slept from 01:58 to 13:20 UTC. Run
+   `cf run --once` or wait for tonight, and keep the Mac awake at night.
+6. Decide the tiger-rant rule (section 10).
 
 ## Verified
 
@@ -305,7 +346,10 @@ time; say if you want it.
   and silencedetect.
 - **Pre-existing failure, not from this branch:** the `slow` faster-whisper test fails in the image. `av.open()`
   rejects `metadata_errors`, a version mismatch between av and faster-whisper; this branch doesn't touch that code.
-- **Compliance review:** the compliance-reviewer subagent first returned FAIL, with two blockers:
+- **Compliance review of the watchdog and window diff:** PASS, `tests/compliance` 252 passed. Its three notes are
+  fixed: a retried download re-runs the channel, live and disk checks; a watchdog error in Phase B fails the
+  candidate, not the night; a step outside any stage has a ceiling.
+- **First compliance review:** the compliance-reviewer subagent first returned FAIL, with two blockers:
   - shadow-rank on a DB copy didn't check the live monthly cap
   - `recent_vod_days` was not re-checked at tap time
 

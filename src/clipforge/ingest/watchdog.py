@@ -181,7 +181,7 @@ def run_watched(
             with open(out, "wb") as fo, open(err, "wb") as fe:
                 proc = subprocess.Popen(cmd, stdout=fo, stderr=fe, stdin=subprocess.DEVNULL)
                 last_marker = -1
-                last_progress = CLOCK.now()
+                step_started = last_progress = CLOCK.now()
                 stalled = False
                 while proc.poll() is None:
                     time.sleep(poll_s)
@@ -198,6 +198,11 @@ def run_watched(
                         _kill(proc)
                         raise StageTimeout(
                             f"{label} killed: stage {st.name} used its {st.ceiling_s / 60:.0f} min ceiling"
+                        )
+                    if st is None and now - step_started >= DEFAULT_STEP_CEILING_S:
+                        _kill(proc)
+                        raise StageTimeout(
+                            f"{label} killed after {DEFAULT_STEP_CEILING_S / 60:.0f} min outside a stage"
                         )
             if stalled:
                 if attempt < retries:
