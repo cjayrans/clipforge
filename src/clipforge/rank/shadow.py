@@ -199,6 +199,25 @@ def _old_clips(factory: sessionmaker[Session], clip_ids: Sequence[int]) -> list[
     return out
 
 
+def _old_window_verdict(old: dict[str, Any], run: MomentRun, profile: MomentProfile) -> str:
+    """How the new logic judged the candidate that best covers an old clip's window."""
+    span = (float(old["start"]), float(old["end"]))
+    best: tuple[float, Evaluated] | None = None
+    for e in run.evaluated:
+        inter = min(span[1], e.span[1]) - max(span[0], e.span[0])
+        share = inter / (span[1] - span[0]) if span[1] > span[0] else 0.0
+        if share > 0.3 and (best is None or share > best[0]):
+            best = (share, e)
+    if best is None:
+        return "not proposed by either finder"
+    e = best[1]
+    status = "picked" if any(e is p for p in run.picks) else _discard_reason(e, run.picks)
+    return (
+        f"{weighted_score(e.item.scores, profile):.0f} [{e.item.archetype}] {_scores(e.item.scores, profile)}; "
+        f"{status}; {e.item.reason}"
+    )[:220]
+
+
 def _discard_reason(e: Evaluated, picks: Sequence[Evaluated]) -> str:
     if e.dropped_by is not None:
         gate = next((g for g in reversed(e.gates) if g.name == e.dropped_by), None)
@@ -249,8 +268,9 @@ def render_shadow_report(
             "",
             "Scored with v1 (reaction/event/setup/absurdity).",
             "",
-            "| clip | state | window | score | archetype | v1 scores | hook | in new top 10? |",
-            "|---|---|---|---|---|---|---|---|",
+            "| clip | state | window | score | archetype | v1 scores | hook | in new top 10? "
+            "| new judgement of that window |",
+            "|---|---|---|---|---|---|---|---|---|",
         ]
         for o in old:
             hit = [
@@ -258,7 +278,8 @@ def render_shadow_report(
             ]
             lines.append(
                 f"| {o['clip']} | {o['state']} | {_ts(o['start'])}-{_ts(o['end'])} | {o['score']} | {o['archetype']} | "
-                f"{o['v1']} | {_md(o['hook'])} | {'#' + ', #'.join(map(str, hit)) if hit else 'no'} |"
+                f"{o['v1']} | {_md(o['hook'])} | {'#' + ', #'.join(map(str, hit)) if hit else 'no'} | "
+                f"{_md(_old_window_verdict(o, run, profile))} |"
             )
     # distribution by archetype (every scored candidate, kept or not)
     by_arch: dict[str, list[float]] = {}

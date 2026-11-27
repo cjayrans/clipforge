@@ -640,25 +640,37 @@ def rank_moments(
         if it.candidate_id in by_id
     ]
 
+    limit = top_n or client.app.pipeline.top_n_per_source
     if vision_on:
         assert frames is not None
         shortlist, _ = best_distinct(evaluated, profile.vision.shortlist)
         frames_fn = frames([e.span for e in shortlist]) if shortlist else None
         if shortlist and frames_fn is None:
             run.vision.failed.append("source media not readable; keyframe check skipped")
-        for e in shortlist if frames_fn is not None else []:
-            with costs.stage("vision"):
-                judged = judge_moment(e, words, campaign, profile, client=client, frames=frames_fn, outcome=run.vision)
-            if judged is None:
-                continue
-            item, record = apply_vision(e.item, judged, profile)
-            redone = evaluate(
-                e.moment, item, profile, words=words, duration_s=duration, events=signal.events, vision=record
-            )
-            evaluated[evaluated.index(e)] = redone
+        checked: set[str] = set()
+        budget = 2 * profile.vision.shortlist  # the shortlist, plus candidates that move up when checked ones drop
+        todo = list(shortlist) if frames_fn is not None else []
+        while todo and len(checked) < budget:
+            for e in todo:
+                if len(checked) >= budget:
+                    break
+                checked.add(e.moment.moment_id)
+                with costs.stage("vision"):
+                    judged = judge_moment(e, words, campaign, profile, client=client, frames=frames_fn,
+                                          outcome=run.vision)  # fmt: skip
+                if judged is None:
+                    continue
+                item, record = apply_vision(e.item, judged, profile)
+                redone = evaluate(
+                    e.moment, item, profile, words=words, duration_s=duration, events=signal.events, vision=record
+                )
+                evaluated[evaluated.index(e)] = redone
+            # every final pick gets the check: the next round covers unchecked candidates that moved up
+            picks_now, _ = best_distinct(evaluated, limit)
+            todo = [e for e in picks_now if e.moment.moment_id not in checked]
 
     run.evaluated = evaluated
-    picks, run.overlaps_dropped = best_distinct(evaluated, top_n or client.app.pipeline.top_n_per_source)
+    picks, run.overlaps_dropped = best_distinct(evaluated, limit)
     run.picks = picks
     result.candidates = [to_candidate(e, profile, words, version) for e in picks]
     result.detail_extra = run.summary(profile.weights_version)

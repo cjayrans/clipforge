@@ -203,7 +203,7 @@ gates:
   reaction_within_s: 3
   reaction_lead_s: 0.5
   min_audio_std_db: 3.0
-  max_candidates: 40
+  max_candidates: 150  # a whole VOD yields ~100 content proposals; scoring 150 costs about $0.05
   min_score: 40
 
 # Rockstar's policy on posting copyrighted material (updated 10 Jan 2025): the ending, big story reveals, isolated

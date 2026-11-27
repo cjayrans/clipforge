@@ -86,10 +86,10 @@ def test_fit_window_keeps_the_payoff_end_and_word_edges(profile) -> None:
 
 def test_overlaps_keep_the_stronger_and_the_cap_applies(profile) -> None:
     script = []
-    for k in range(60):
+    for k in range(200):
         base = 30.0 * k
         script += [(base, "okay"), (base + 10, "look at this"), (base + 11.2, "no no no"), (base + 12.5, "oh my god")]
-    res = generate_moments(transcript(script, duration_s=1800.0), profile)
+    res = generate_moments(transcript(script, duration_s=6000.0), profile)
     ms = res.moments
     assert len(ms) == profile.gates.max_candidates
     for i, a in enumerate(ms):

@@ -25,7 +25,15 @@ from clipforge.rank.vision import (
 )
 from clipforge.schemas import Platform, PxBox
 from tests.rank.anthropic_mock import FakeAnthropic, message, tool_use
-from tests.rank.moment_fakes import REACTION_SCRIPT, moment_item, moment_tools, tool_of, transcript, verdict
+from tests.rank.moment_fakes import (
+    REACTION_SCRIPT,
+    moment_item,
+    moment_tools,
+    proposal,
+    tool_of,
+    transcript,
+    verdict,
+)
 from tests.render._media import needs_ffmpeg
 from tests.support.factories import campaign_in
 
@@ -150,3 +158,27 @@ def test_real_jpeg_frames_and_facecam_crop(tmp_path: Path) -> None:
     fn = source_frames(src, width=768, quality=80, facecam=PxBox(x=0, y=0, w=320, h=180))
     got = fn(0.0, 6.0, [1.0, 3.0, 5.0])
     assert [f.kind for f in got] == ["frame", "frame", "frame", "facecam", "facecam"]
+
+
+def test_every_final_pick_is_checked_when_checked_ones_drop(fake: FakeAnthropic, client: ClaudeClient) -> None:
+    """Shortlist 1: the checked candidate turns out to be a menu and drops; the one that moves up is checked too."""
+    raw = (Path(__file__).resolve().parents[2] / "config/moment_profiles/gta6-streamer.yaml").read_text()
+    one = parse_profile(raw.replace("  shortlist: 12\n", "  shortlist: 1\n"))
+    calls: list[int] = []
+
+    def frames_judge(body):
+        calls.append(1)
+        scene = "menu_loading" if len(calls) == 1 else "gameplay"
+        return tool_use(TOOL_NAME, verdict(scene=scene, visible_event=len(calls) > 1))
+
+    fake.default = moment_tools(
+        proposals=[proposal(24.0, 41.0, confidence=0.9), proposal(60.0, 75.0, confidence=0.5)],
+        per_candidate=lambda cid, s, e, b: {"hook": 9} if s < 50 else {},
+        frames=frames_judge,
+    )
+    result = rank_moments(transcript(REACTION_SCRIPT), campaign_in(), [Platform.TIKTOK], one, client=client,
+                          frames=lambda w: frames, top_n=1)  # fmt: skip
+    (c,) = result.candidates
+    assert c.start_s > 50  # the menu one dropped
+    assert c.moment.vision is not None  # and the pick that replaced it was checked
+    assert len(calls) == 2
