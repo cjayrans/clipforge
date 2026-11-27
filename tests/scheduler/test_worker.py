@@ -37,6 +37,7 @@ ARM_AT = datetime(2026, 11, 24, 1, 0, tzinfo=UTC)  # Mon 20:00 ET
 FIRST_SLOT = datetime(2026, 11, 24, 1, 10, tzinfo=UTC)  # Mon 20:10 ET
 
 EXPECTED_JOBS = {
+    "vod_discovery",
     "nightly_pipeline",
     "purge_sources",
     "backup_db",
@@ -80,6 +81,7 @@ def test_every_architecture_job_exists_once(settings: Settings) -> None:
 @pytest.mark.parametrize(
     ("job_id", "after", "expected"),
     [
+        ("vod_discovery", datetime(2026, 11, 23, 12, 0, tzinfo=NY), datetime(2026, 11, 24, 0, 30, tzinfo=NY)),
         ("nightly_pipeline", datetime(2026, 11, 23, 12, 0, tzinfo=NY), datetime(2026, 11, 24, 1, 0, tzinfo=NY)),
         ("purge_sources", datetime(2026, 11, 23, 12, 0, tzinfo=NY), datetime(2026, 11, 24, 3, 30, tzinfo=NY)),
         ("backup_db", datetime(2026, 11, 23, 12, 0, tzinfo=NY), datetime(2026, 11, 24, 4, 0, tzinfo=NY)),

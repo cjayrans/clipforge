@@ -41,6 +41,8 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CLIPFORGE_CONFIG", str(EXAMPLE_CONFIG))
     monkeypatch.setenv("CLIPFORGE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("CLIPFORGE_INBOX_DIR", str(tmp_path / "inbox"))
+    # The disk guard (ingest/disk.py) sees plenty of free space unless a test sets its own.
+    monkeypatch.setattr("clipforge.ingest.disk.free_bytes", lambda _directory: 10**15)
 
 
 @pytest.fixture

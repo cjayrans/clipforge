@@ -99,6 +99,9 @@ class ClaudeClient:
     # ----------------------------------------------------------------------------------------------
 
     def _create(self, **params: Any) -> tuple[anthropic.types.Message, int]:
+        from clipforge.ingest import watchdog
+
+        watchdog.check()  # StageTimeout when the rank/copy stage used its active-time ceiling
         with session_scope(self.ledger) as s:
             costs.guard(s, self.app)  # raises SpendCapReached before spending anything
         attempts = 0
@@ -152,19 +155,23 @@ class ClaudeClient:
         *,
         model: str,
         system: str,
-        user: str,
+        user: str | Sequence[Mapping[str, Any]],
         tool_name: str,
         tool_description: str,
         input_schema: Mapping[str, Any],
         max_tokens: int = 4096,
         effort: Effort | None = None,
     ) -> LLMResult:
-        """One call that must answer through `tool_name` (Haiku). Returns the tool input as a dict."""
+        """One call that must answer through `tool_name` (Haiku). Returns the tool input as a dict.
+
+        `user` is the prompt text, or a list of content blocks (text and base64 `image` blocks for the keyframe
+        check; https://platform.claude.com/docs/en/build-with-claude/vision)."""
+        content: Any = user if isinstance(user, str) else [dict(block) for block in user]
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "system": system,
-            "messages": [{"role": "user", "content": user}],
+            "messages": [{"role": "user", "content": content}],
             "tools": [
                 {
                     "name": tool_name,

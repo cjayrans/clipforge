@@ -69,7 +69,9 @@ def test_one_groq_failure_is_retried_not_fallen_back(session: Session, settings:
 def test_two_groq_failures_fall_back_to_local(
     session: Session, settings: Settings, factory: Factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(service, "plan_chunks", lambda d: chunker.plan_chunks(d, max_bytes=200_000))
+    monkeypatch.setattr(
+        service, "plan_chunks", lambda d, **kw: chunker.plan_chunks(d, max_bytes=200_000, overlap_s=2.0, **kw)
+    )
     src = downloaded_source(factory, settings, 120.0)
     groq, loc = FlakyGroq(fail_on=1), FakeLocal()  # chunk 0 succeeds, chunk 1 fails twice
     t = service.transcribe_source(session, settings, src, transcriber=groq, local=loc, runner=fake_runner(120))

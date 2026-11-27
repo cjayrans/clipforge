@@ -87,11 +87,22 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
 - `inbox.py`: watches `inbox/<campaign_slug>/` for files Carson drops in by hand (footage the campaign supplied as a download he
   made himself); registers each as a source with `url = file://inbox/...` after confirming the campaign is active.
 - Twitch VODs expire (up to 60 days) and Twitch clips are ≤ 60 s: register the source early, download once, keep the hash.
-- Purge job deletes source media 7 days after all its candidates are terminal.
+- Purge job deletes source media 7 days after all its candidates are terminal. moments-v2: the nightly run also deletes
+  a RANKED source's file as soon as nothing is pending (`ingest/purge.purge_if_done`); unrendered candidates expire 3
+  days after ranking. Before a download, `ingest/disk.py` checks free space (Twitch: the VOD's size from yt-dlp
+  metadata) plus `min_free_gb`.
+- VOD proposals (moments-v2, `ingest/twitch_helix.py`): a nightly job (00:30) looks up recent archive VODs of each
+  campaign's `stream_channels` with the official Twitch Helix API (app token; only campaigns with
+  `auto_propose_vods`, `allow_stream_download` and `recent_vod_days`) and writes at most 2 `vod_proposals` per campaign.
+  The bot sends each with Add / Dismiss; only Add registers the URL (`registry.add_source`). Nothing is registered
+  or downloaded automatically.
 
 ### 4.2 transcribe
 - Extract audio: `ffmpeg -i in -vn -ac 1 -ar 16000 -b:a 32k out.mp3` (~14 MB per hour).
-- Chunk to < 24 MB (≈ 95 min) with 2 s overlap; merge words, de-duplicate overlap by timestamp.
+- Chunk to ~30 min (always < 24 MB) with a 45 s overlap. One `silencedetect` pass moves cuts into silences and puts
+  the stitch seam in a silence inside each overlap; words are merged onto one global timeline (each word once, then
+  duplicates removed by text + timestamp). Signals, the content pass, candidate windows and clip cuts all use this
+  global timeline and the full source file, never a chunk (tests in `tests/rank/test_boundaries.py`).
 - Groq: `client.audio.transcriptions.create(model="whisper-large-v3-turbo", response_format="verbose_json",
   timestamp_granularities=["word","segment"])`. Docs: https://console.groq.com/docs/speech-to-text
   (the docs page has a conflicting code comment about `json` vs `verbose_json` — verify word timestamps in a test).
@@ -109,21 +120,36 @@ reports it completed. It never re-sends (the post keeps its `upload_post_job`; i
   youtube_title (≤ 60 chars), captions per platform. `compliance.normalize_caption` then forces `#ad` first, appends
   required campaign tags, strips URLs for X, enforces platform length limits.
 - Prompts live in `prompts/*.md` with a `version:` header; the version is stored on each candidate.
-- Moment ranker (campaigns with `moment_profile`; research in `docs/research/clipping-gta6-moment-types.md`). All
-  niche knowledge is in the profile YAML (`config/moment_profiles/<name>.yaml`, `rank/profile.py`): archetypes,
-  weights + `weights_version`, window rules, signal thresholds, word lists, gates, skip rules, review flags.
-  - `media_signals.py`: two cheap ffmpeg passes over the whole source: per-second RMS loudness (`astats`) and
-    keyframe-only frame difference (`signalstats` YDIF). A failed pass degrades to transcript-only signals.
-  - `signals.py` (pure): triggers (motion spike, loud sound without speech, silence beat, cue phrase, chat mention)
-    and reactions (stressed exclamation, laughter, loud speech); z-scores against a trailing median/MAD baseline.
-  - `moments.py` (pure): gate `trigger_reaction` (a reaction within 3 s of a trigger, or no candidate), window rules
-    (2-5 s before the trigger, payoff chain, 12-35 s target, 45 s cap), gate `dead_footage` (low loudness spread and
-    no motion), overlap removal, top 40 by pre-score.
-  - `moment_score.py`: Haiku forced tool `score_moments` (archetype, reaction/event/setup/absurdity 0-10, window,
-    skip/review flags, one-line reason); gates `brief`, `skip_rules` (reject or penalize, e.g. cutscene policy) and
-    `min_score`; weighted score → `Candidate.score`; the model's window only if it obeys the rules. Review flags
-    (sexual/graphic) never reject: the Telegram preview shows "CHECK BEFORE APPROVING". The archetype and reason go
-    to the copy prompt as `$moment_note`.
+- Moment ranker v2 (campaigns with `moment_profile`; research in `docs/research/clipping-gta6-moment-types.md`). All
+  niche knowledge is in the profile YAML (`config/moment_profiles/<name>.yaml`, `rank/profile.py`): the moment
+  catalogue (archetypes with examples and signs: examples of what good looks like, never a list of allowed moments),
+  the reject list, the six-part rubric (hook, arc, arousal, sendability, clarity, density) with weights and
+  `weights_version`, window rules, content-pass and vision settings, signal thresholds, word lists, skip rules and
+  review flags.
+  - `content_pass.py`: the whole transcript in 12 min segments with 2 min overlap, Haiku forced tool
+    `propose_moments` (start, end, trigger, payoff, archetype or `other`, confidence, reason); quiet and deadpan
+    moments included; proposals deduplicated on the global timeline (a whole proposal beats one cut at a segment
+    edge).
+  - `media_signals.py` / `signals.py` / `moments.py`: cheap loudness/motion/transcript signals over the whole source
+    propose more candidates (trigger + reaction pairs, strong reactions alone). Signals are evidence only: nothing is
+    dropped for being quiet, and the old trigger+reaction requirement is gone.
+  - `candidates.py`: content and signal candidates merged by overlap, `found_by` content / signals / both.
+  - `moment_score.py`: Haiku forced tool `score_moments`, 8 candidates per call (by candidate, never by time slice),
+    each with 30 s of transcript before and after; six rubric scores, `has_trigger` / `has_payoff`, window, skip /
+    review flags, reason. Gates `brief`, `skip_rules` (publisher policy), `content` (clear trigger and payoff),
+    `window` (a moment that cannot fit 45 s is dropped, never cut), `min_score`. Window: open on the most
+    interesting beat a stranger can follow, no dead air, end right after the payoff, 15-30 s target, 45 s cap; a
+    payoff past the window extends it.
+  - `vision.py`: keyframes (one per 2.5 s, max 8, plus facecam crops) of the best 12 go to Haiku as image blocks
+    (forced tool `judge_frames`): visible event / payoff / reaction, scene, spoiler and graphic risk; corrected rubric
+    scores replace the transcript ones; findings map to profile skip rules / review flags. Cost per candidate is
+    recorded.
+  - Copy (Sonnet) is written only for the candidates the nightly run picks to render, across all sources.
+  - Review flags (sexual/graphic) never reject: the Telegram preview shows "CHECK BEFORE APPROVING", plus the rubric
+    scores, `found_by` and the frames verdict.
+  - Calibration: candidates store the rubric scores, `found_by`, vision result, archetype and weights version; posts
+    take watch time, completion, shares/sends and likes (`cf post metrics`); `cf report moments` shows rubric
+    correlations from 20 posts. `cf source shadow-rank` ranks a source without writing candidates and reports.
 - `evals/`: harness that runs scoring on fixture transcripts and checks schema validity, top-k stability across
   repeated runs (Haiku/Sonnet 5.5 reject `temperature`, so there is no temperature 0), and ranking agreement with
   Carson's labels (`evals/labels.csv`, filled over time).

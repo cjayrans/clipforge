@@ -167,6 +167,9 @@ class CampaignRow(Base):
     max_source_minutes: Mapped[int | None] = mapped_column(Integer)
     moment_profile: Mapped[str | None] = mapped_column(String(64))
     layout: Mapped[str] = mapped_column(String(16), default="auto", server_default="auto")
+    # moments-v2 (migration 0005): propose recent VODs of stream_channels in Telegram; never auto-registered.
+    auto_propose_vods: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    recent_vod_days: Mapped[int | None] = mapped_column(Integer)
     facecam_box: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     status: Mapped[CampaignStatus] = mapped_column(
         _enum(CampaignStatus, "campaign_status"), default=CampaignStatus.ACTIVE
@@ -193,6 +196,28 @@ class SourceRow(Base):
     purged_at: Mapped[datetime | None] = mapped_column()
     # Facecam detection result (render.facecam.FacecamDetection as JSON, "none" included), computed once per source.
     facecam_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class VodProposalRow(Base):
+    """moments-v2 (migration 0005): a recent VOD of a campaign's stream channel, proposed in Telegram. Only the
+    operator's Add tap registers it as a source; `decision` is pending | added | dismissed."""
+
+    __tablename__ = "vod_proposals"
+    __table_args__ = (UniqueConstraint("campaign_id", "url"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    url: Mapped[str] = mapped_column(Text)
+    video_id: Mapped[str] = mapped_column(String(32))
+    channel: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(Text, default="")
+    vod_created_at: Mapped[datetime | None] = mapped_column()
+    duration_s: Mapped[float | None] = mapped_column(Float)
+    proposed_at: Mapped[datetime] = mapped_column(default=utcnow)
+    message_id: Mapped[int | None] = mapped_column(Integer)
+    decision: Mapped[str] = mapped_column(String(16), default="pending")
+    decided_at: Mapped[datetime | None] = mapped_column()
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("sources.id"))
 
 
 class TranscriptRow(Base):
@@ -237,6 +262,19 @@ class CandidateRow(Base):
     gate_results_json: Mapped[list[Any] | None] = mapped_column(JSON)
     skip_flags: Mapped[list[Any] | None] = mapped_column(JSON)
     review_flags: Mapped[list[Any] | None] = mapped_column(JSON)
+    # moments-v2 (migration 0005): the six-part rubric (hook, arc, arousal, sendability, clarity, density; all 0-10),
+    # every rubric score as JSON (profiles may name other criteria), which finder proposed the candidate
+    # (content / signals / both), the content pass's confidence and the keyframe check result.
+    score_hook: Mapped[int | None] = mapped_column(Integer)
+    score_arc: Mapped[int | None] = mapped_column(Integer)
+    score_arousal: Mapped[int | None] = mapped_column(Integer)
+    score_sendability: Mapped[int | None] = mapped_column(Integer)
+    score_clarity: Mapped[int | None] = mapped_column(Integer)
+    score_density: Mapped[int | None] = mapped_column(Integer)
+    scores_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    found_by: Mapped[str | None] = mapped_column(String(16), index=True)
+    content_confidence: Mapped[float | None] = mapped_column(Float)
+    vision_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     @validates("state")
@@ -314,6 +352,12 @@ class PostRow(Base):
     # Views 24 h and 72 h after publishing (migration 0003), for moment-ranker calibration; filled later.
     views_24h: Mapped[int | None] = mapped_column(Integer)
     views_72h: Mapped[int | None] = mapped_column(Integer)
+    # Viewer-response metrics entered by the operator (`cf post metrics`, migration 0005), for calibration.
+    avg_watch_time_s: Mapped[float | None] = mapped_column(Float)
+    completion_rate: Mapped[float | None] = mapped_column(Float)  # 0-1
+    shares: Mapped[int | None] = mapped_column(Integer)  # TikTok shares / Instagram sends
+    likes: Mapped[int | None] = mapped_column(Integer)
+    metrics_at: Mapped[datetime | None] = mapped_column()
 
     @validates("state")
     def _check_state(self, _key: str, value: PostState | str) -> PostState:
@@ -382,6 +426,9 @@ class CostRow(Base):
     units: Mapped[float] = mapped_column(Float)
     unit_kind: Mapped[str] = mapped_column(String(32))
     usd: Mapped[float] = mapped_column(Float)
+    # The source the call was made for (migration 0005), for the per-source spend guard; None for other calls.
+    source_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    stage: Mapped[str | None] = mapped_column(String(32))
 
 
 class EventRow(Base):

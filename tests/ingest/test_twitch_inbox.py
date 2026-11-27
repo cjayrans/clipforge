@@ -70,7 +70,8 @@ def test_twitch_download_with_permission(session: Session, settings: Settings, f
     assert src.status is SourceStatus.DOWNLOADED
     assert src.sha256 == hashlib.sha256(BODY).hexdigest()
     (ydl,) = FakeYDL.instances
-    assert ydl.urls == ["https://www.twitch.tv/videos/123456"]
+    # metadata first (the disk-space check reads the VOD's size), then the download
+    assert ydl.urls == ["https://www.twitch.tv/videos/123456", "https://www.twitch.tv/videos/123456"]
     assert ydl.opts["allowed_extractors"] == ["twitch:vod", "twitch:clips"]
     assert ydl.opts["noplaylist"] is True
     assert Path(src.local_path or "").name == f"{src.id}.mp4"

@@ -73,6 +73,8 @@ TARGETS: dict[str, Target] = {
     "import-reconcile": Target("track.reconcile", "import_csv", "Phase 1 D (feat/ops)"),
     "run --once": Target("pipeline", "run_once", "Phase 2 (P2.2)"),
     "post repair": Target("publish.repair", "repair_failed_posts", "Phase 3 (fix/post-status-parsing)"),
+    "post metrics": Target("track.moments", "set_post_metrics", "feat/moments-v2"),
+    "source shadow-rank": Target("rank.shadow", "shadow_rank", "feat/moments-v2"),
 }
 
 EXIT_NOT_IMPLEMENTED = 3
@@ -241,6 +243,36 @@ def source_facecam(
     _delegate(ctx, "source facecam", source_id, redetect=redetect, store=not no_store, debug_image=debug_image)
 
 
+@source_app.command("shadow-rank")
+def source_shadow_rank(
+    ctx: typer.Context,
+    source_id: int,
+    report: Annotated[Path, typer.Option(help="Markdown report to write.")],
+    full: Annotated[bool, typer.Option("--full", help="Download the whole VOD again to a scratch dir.")] = False,
+    compare_clips: Annotated[
+        str, typer.Option(help="Clip ids picked before, to compare against (e.g. 24-31 or 24,25,26).")
+    ] = "",
+    ledger_url: Annotated[
+        str | None,
+        typer.Option(
+            help="Live database URL when running on a copy: its monthly cap and pause flag are enforced and this "
+            "run's cost rows are appended to it (pointing it at the same database counts the run twice: safe)."
+        ),
+    ] = None,
+) -> None:
+    """Rank a source with the current moment logic WITHOUT writing candidates, and write a comparison report."""
+    _delegate(
+        ctx,
+        "source shadow-rank",
+        source_id,
+        report=report,
+        full=full,
+        compare_clips=compare_clips,
+        ledger_url=ledger_url,
+        with_session=False,
+    )
+
+
 @source_app.command("retry")
 def source_retry(ctx: typer.Context, source_id: int) -> None:
     """Put a failed source back in the queue; the next nightly run downloads it again."""
@@ -265,6 +297,38 @@ def post_repair(
         console.print("dry run: nothing changed. Add --apply to repair.")
     if any(not r.ok for r in results):
         raise typer.Exit(EXIT_CHECK_FAILED)
+
+
+@post_app.command("metrics")
+def post_metrics(
+    ctx: typer.Context,
+    post_id: int,
+    watch_time: Annotated[float | None, typer.Option(help="Average watch time in seconds.")] = None,
+    completion: Annotated[float | None, typer.Option(help="Completion rate, 0-1 or a percentage.")] = None,
+    shares: Annotated[int | None, typer.Option(help="Shares (TikTok) or sends (Instagram).")] = None,
+    likes: Annotated[int | None, typer.Option(help="Likes.")] = None,
+    views_24h: Annotated[int | None, typer.Option("--views-24h", help="Views 24 h after publishing.")] = None,
+    views_72h: Annotated[int | None, typer.Option("--views-72h", help="Views 72 h after publishing.")] = None,
+) -> None:
+    """Enter a post's viewer-response numbers from the platform's analytics (for ranker calibration)."""
+    from clipforge.track.moments import MetricsError
+
+    try:
+        text = _delegate(
+            ctx,
+            "post metrics",
+            post_id,
+            watch_time_s=watch_time,
+            completion=completion,
+            shares=shares,
+            likes=likes,
+            views_24h=views_24h,
+            views_72h=views_72h,
+        )
+    except MetricsError as exc:
+        err.print(f"[red]{exc}[/red]")
+        raise typer.Exit(EXIT_CHECK_FAILED) from exc
+    console.print(text)
 
 
 @clip_app.command("relayout")

@@ -1,59 +1,160 @@
-# Moment profile for streamer-VOD GTA 6 campaigns (Boeshi first). Loaded by clipforge.rank.profile.
-# Source: docs/research/clipping-gta6-moment-types.md (launch-week evidence, 24 Nov 2026). Weights and thresholds are
-# starting guesses, not fitted: re-fit after the first 20-30 posted clips (`cf report moments`) and bump
-# weights_version whenever weights, gates or archetypes change.
+# Moment profile for streamer-VOD GTA 6 campaigns (Boeshi, Dylan Page, AsianJeff). Loaded by clipforge.rank.profile.
+# Sources: docs/research/clipping-gta6-moment-types.md (launch-week evidence, 24 Nov 2026) and the moments-v2 brief
+# (26 Nov 2026): platforms rank short video on watch time, completion, rewatches and sends; viral clips evoke
+# high-arousal emotion; most drop-off is in the first 3 seconds. Weights and thresholds are starting guesses, not
+# fitted: re-fit after the first 20-30 posted clips (`cf report moments`) and bump weights_version whenever the
+# rubric, weights, gates or catalogue change.
 name: gta6-streamer
-weights_version: gta6-streamer-v1
-description: Streamer playing GTA 6. Views follow a visible reaction to something going wrong, absurd or escalating.
+weights_version: gta6-streamer-v2
+description: Streamer playing GTA 6. Views follow a moment a stranger gets in 3 seconds and wants to send to a friend.
 
 ranker_notes: >-
-  The footage is a streamer playing GTA 6 (Grand Theft Auto VI), usually with a face cam and live chat. The
-  biggest on-screen moment is rarely the clip; the streamer's reaction is. Walking, driving, exploring, menus,
-  loading screens and talk about settings with no event are boring. A stranger scrolling past must get the setup
-  in the first 2-3 seconds. English-language moments that need no knowledge of the stream travel best.
+  The footage is a streamer playing GTA 6 (Grand Theft Auto VI), usually with a face cam and live chat. The biggest
+  on-screen moment is rarely the clip; what the streamer does with it often is. Quiet or deadpan moments count when
+  they land. A stranger scrolling past must get what is happening in the first 3 seconds, with no knowledge of the
+  stream. English-language moments travel best.
 
+# The catalogue: examples of what good looks like, NOT a list of allowed moments. Any moment that scores well on the
+# rubric is valid and uses archetype `other` when nothing here fits.
 archetypes:
   - id: blunder
-    label: Streamer blunder with a big reaction
-    description: The streamer causes their own loss (misclick, wrong button, deleting a save, powering off, buying
-      the wrong thing, killing themselves) and reacts big. Strongest evidence of all types.
-  - id: shock
-    label: Shock or disbelief
-    description: A first look at something new, a speechless pause, a sudden wanted level, a jump scare, "is that
-      real?" disbelief.
-  - id: npc_weirdness
-    label: NPC weirdness
-    description: An NPC does something unscripted, odd or funny and the streamer calls it out ("look at this guy").
+    label: Streamer screws up and reacts
+    description: The streamer causes their own loss and reacts to it.
+    examples:
+      - a misclicked purchase
+      - powering off the console and losing hours of progress
+      - deleting the game file instead of closing a menu
+    signs:
+      - '"no no no", "what did I just do"'
+      - a long silence, then laughing
+  - id: npc_absurd
+    label: Something absurd with an NPC
+    description: An NPC does something unscripted, odd or funny and the streamer calls it out.
+    examples:
+      - an NPC refusing to drop a selfie stick
+      - an NPC holding your necklace until you pay
+    signs:
+      - '"look at this guy", "is he serious"'
+      - the streamer repeating what the NPC did, in disbelief
   - id: glitch
     label: Glitch or physics fail
-    description: A glitch, ragdoll, flying car, vanishing character or physics fail, with rage or disbelief.
+    description: The game breaks in a visible, funny way.
+    examples:
+      - being pulled into a wall
+      - a crash, then an instant respawn
+    signs:
+      - a sudden visual oddity
+      - '"bro what", "that''s not supposed to happen"'
   - id: chaos
-    label: Escalation and chaos
-    description: Things escalate fast (police chase turns, crash, explosion, flight gone wrong, boat death, WASTED
-      or BUSTED screen).
+    label: Chaos that escalates fast
+    description: Things go from calm to out of control within seconds.
+    examples:
+      - the wanted level jumping to six stars
+      - a police chase turning badly
+      - a crash
+    signs:
+      - the streamer's tone shifts from calm to panicked within seconds
+  - id: discovery
+    label: Discovery
+    description: The streamer finds something hidden or triggers a secret, with a visible payoff. A secret cutscene
+      inside a larger gameplay moment is fine.
+    examples:
+      - finding a hidden item
+      - triggering a secret or easter egg (such as throwing the egg off the tower)
+    signs:
+      - '"wait, is that a...", "there''s a secret", "did you see that"'
+      - then a visible payoff
+    copy_hint: A "secret / hidden" framing is fine for the hook and captions.
+  - id: bit
+    label: Roleplay or deadpan bit that lands
+    description: The streamer's own humor (e.g. negotiating like a loan shark), and the joke makes sense without
+      earlier context.
+    examples:
+      - negotiating with an NPC like a loan shark
+    signs:
+      - chat reacts
+      - he cracks, or holds a straight face for a beat
   - id: chat_interplay
     label: Chat interplay
-    description: Chat warns and the streamer ignores it, chat gives bad advice, or a chat message lands at the
-      wrong moment.
+    description: Chat and the streamer play off each other at the worst possible moment.
+    examples:
+      - chat warns and he ignores it
+      - bad advice from chat
+      - a chat message at the worst moment
+    signs:
+      - the streamer reads or answers chat right before or after the event
   - id: other
     label: Other
-    description: Anything else worth a clip (a funny line, a clutch play) that fits none of the above.
+    description: Any other moment that scores well on the rubric (a funny line, a clutch play, a relatable rant).
+
+# Never worth a clip (the ranker rejects these through the content gate or low scores).
+reject_examples:
+  - walking or driving with nothing happening
+  - reading chat or talking about settings with no event
+  - menus and loading screens
+  - long cutscenes, endings and story reveals (publisher policy)
+  - a joke that needs two minutes of earlier context
+  - loud reactions to nothing
+
+# Six-part rubric, each 0-10. Weighted score = 10 x sum(weight x score), 0-100.
+rubric:
+  - id: hook
+    label: Hook in the first 3 seconds
+    description: Something thumb-stopping within 3 s of the clip start (the funniest or most surprising beat, a clear
+      claim, a visible reaction). Most viewers leave in the first 3 seconds.
+  - id: arc
+    label: Arc
+    description: Setup, escalation, payoff, and it ends right after the payoff. Fits 15-30 s (hard cap 45 s).
+  - id: arousal
+    label: Emotional arousal
+    description: Would a stranger laugh, gasp, or feel awe, anger or anxiety? Flat or low-energy content scores low
+      regardless of how loud it is.
+  - id: sendability
+    label: Sendability
+    description: Would someone send it to a friend? Relatable, quotable or absurd.
+  - id: clarity
+    label: Standalone clarity
+    description: A stranger gets it within 3 s with no stream context.
+  - id: density
+    label: Density and continuity
+    description: It resolves a build or starts something larger; not an isolated beat or a reaction to nothing.
 
 weights:
-  reaction: 0.35
-  event: 0.25
-  setup: 0.25
-  absurdity: 0.15
+  hook: 0.2
+  arc: 0.2
+  arousal: 0.2
+  sendability: 0.2
+  clarity: 0.1
+  density: 0.1
 
 window:
-  pre_roll_min_s: 2
-  pre_roll_s: 3
-  pre_roll_max_s: 5
-  post_roll_s: 1.5
   min_s: 12
-  target_max_s: 35
+  target_min_s: 15
+  target_max_s: 30
   max_s: 45
+  post_roll_s: 1.5
+  max_lead_silence_s: 0.6
+  context_s: 30
   chain_gap_s: 4
+
+content_pass:
+  segment_s: 720
+  overlap_s: 120
+  max_proposals_per_segment: 12
+  edge_s: 5
+
+vision:
+  enabled: true
+  shortlist: 12
+  max_frames: 8
+  frame_every_s: 2.5
+  frame_width: 768
+  facecam_crop: true
+  no_event_skip: no_event
+  cutscene_skip: cutscene
+  cutscene_part_skip: cutscene_part
+  spoiler_skip: story_reveal
+  graphic_review: graphic
 
 signals:
   baseline_s: 60
@@ -80,6 +181,8 @@ lexicon:
     - what was that
     - what is that
     - what just happened
+    - what did i just do
+    - that's not supposed to happen
     - i'm dead
     - get out
   laughter_patterns:
@@ -89,15 +192,18 @@ lexicon:
     - '^l+o+l+$'
     - '^lmf?ao+$'
     - '^\(?laugh(s|ing|ter)?\)?$'
-  cues: [look at, look at this, watch this, wait, hold on, is that, did you see, what is he doing, what is she doing]
+  cues: [look at, look at this, watch this, wait, hold on, is that, did you see, what is he doing, what is she doing,
+         is he serious, there's a secret]
   chat: [chat, chatter, chatters, mods]
   sensitive: [strip club, stripper, lap dance, private dance, naked, nude, boobs, gore, decapitated]
 
+# Signal candidates are evidence, not a gate: a trigger + reaction pair (or a strong reaction on its own) proposes a
+# candidate and the loudness spread is recorded, but nothing is dropped for being quiet.
 gates:
   reaction_within_s: 3
   reaction_lead_s: 0.5
   min_audio_std_db: 3.0
-  max_candidates: 40
+  max_candidates: 150  # a whole VOD yields ~100 content proposals; scoring 150 costs about $0.05
   min_score: 40
 
 # Rockstar's policy on posting copyrighted material (updated 10 Jan 2025): the ending, big story reveals, isolated
@@ -117,13 +223,17 @@ skip_rules:
     description: An in-game TV show, radio bit, ad or comedy act playing on its own, where the clip would be the
       game's own content rather than the streamer's moment.
     action: reject
+  - id: no_event
+    label: Menu, loading or just chatting
+    description: A menu, loading screen, settings talk or just chatting, with no event on screen.
+    action: reject
   - id: cutscene_part
     label: Partly cutscene
     description: A cutscene takes up a large part of the window, but the streamer's reaction is the point.
     action: penalize
     penalty: 0.6
 
-# Never an auto-reject: the clip is scored on the blunder and reaction, and the Telegram preview asks for a manual check.
+# Never an auto-reject: the clip is scored on the moment, and the Telegram preview asks for a manual check.
 review_flags:
   - id: sexual
     label: Sexual content

@@ -145,6 +145,9 @@ class GroqTranscriber:
 
     def transcribe_chunk(self, path: Path, duration_s: float) -> ChunkOutput:
         """Transcribe one file (< 25 MB). Raises SpendCapReached before calling when the cap is hit."""
+        from clipforge.ingest import watchdog
+
+        watchdog.check()  # StageTimeout when the transcribe stage used its active-time ceiling
         if self.ledger is not None:
             with session_scope(self.ledger) as s:
                 costs.guard(s, self.settings.app)

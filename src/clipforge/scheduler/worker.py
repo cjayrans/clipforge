@@ -147,6 +147,19 @@ def job_purge_sources(ctx: WorkerContext) -> None:
         purge(session, ctx.settings)
 
 
+def job_vod_discovery(ctx: WorkerContext) -> None:
+    """moments-v2: propose recent VODs of campaigns' stream channels (the bot sends them with an Add button)."""
+    from clipforge.ingest.twitch_helix import HelixClient, discover_vods
+
+    client = HelixClient.from_settings(ctx.settings)
+    if client is None:
+        log.info("vod_discovery: TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET not set; skipping")
+        return
+    with session_scope(ctx.factory) as session:
+        made = discover_vods(session, ctx.settings, client=client, now=ctx.clock())
+    log.info("vod_discovery: %d new proposal(s)", made)
+
+
 def job_nightly_pipeline(ctx: WorkerContext) -> None:
     run_once = resolve_optional("clipforge.pipeline", "run_once")
     if run_once is None:
@@ -194,6 +207,7 @@ def build_jobs(settings: Settings) -> list[JobSpec]:
         return IntervalTrigger(seconds=seconds, timezone=tz)
 
     return [
+        JobSpec("vod_discovery", cron(hour=0, minute=30), job_vod_discovery, daily),
         JobSpec("nightly_pipeline", cron(hour=1, minute=0), job_nightly_pipeline, daily),
         JobSpec("purge_sources", cron(hour=3, minute=30), job_purge_sources, daily),
         JobSpec("backup_db", cron(hour=4, minute=0), job_backup_db, daily),

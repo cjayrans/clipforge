@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from clipforge import costs, heartbeat
 from clipforge.compliance import allowed_platforms
 from clipforge.config import Settings
-from clipforge.db import ClipRow, CostRow, EveningRow, PostRow
+from clipforge.db import CandidateRow, ClipRow, CostRow, EveningRow, PostRow
 from clipforge.publish.queries import campaign_model, lineage
 from clipforge.publish.slots import plan_slots
 from clipforge.schemas import ClipState, RenderManifest, Slot
@@ -44,10 +44,40 @@ def layout_line(clip: ClipRow) -> str:
     return line
 
 
+SCORE_LABELS = {"sendability": "send"}
+
+
+def moment_line(cand: CandidateRow) -> str:
+    """'Moment: blunder (found by both) | hook 8, arc 7, ...' (v1 rows show their four original scores)."""
+    scores = cand.scores_json if isinstance(cand.scores_json, dict) else None
+    if scores is None:
+        old = {"reaction": cand.score_reaction, "event": cand.score_event, "setup": cand.score_setup}
+        scores = {**old, "absurdity": cand.score_absurdity}
+    parts = ", ".join(f"{SCORE_LABELS.get(k, k)} {v}" for k, v in scores.items() if v is not None)
+    found = f" (found by {cand.found_by})" if cand.found_by else ""
+    return f"Moment: {cand.archetype}{found} | {parts}"
+
+
+def vision_line(vision: object) -> str:
+    """'Frames: gameplay; event yes, payoff yes, reaction no. <note>' from the keyframe check, if one ran."""
+    if not isinstance(vision, dict) or "scene" not in vision:
+        return ""
+
+    def yn(key: str) -> str:
+        return "yes" if vision.get(key) else "no"
+
+    note = str(vision.get("note") or "")[:120]
+    line = (
+        f"Frames: {vision['scene']}; event {yn('visible_event')}, payoff {yn('visible_payoff')}, "
+        f"reaction {yn('reaction_visible')}"
+    )
+    return f"{line}. {note}".strip() if note else line
+
+
 def preview_caption(session: Session, settings: Settings, clip: ClipRow) -> str:
     """Caption under a review video: campaign, score, hook, platforms, duration, layout (and render time); for
-    moment-ranked clips also the archetype and the four scores, and a manual-check line when the ranker flagged the
-    content (never auto-rejected).
+    moment-ranked clips also the archetype, which finder proposed it, the rubric scores, the keyframe check's verdict,
+    and a manual-check line when the ranker flagged the content (never auto-rejected).
     """
     lin = lineage(session, clip)
     campaign = campaign_model(lin.campaign)
@@ -65,10 +95,10 @@ def preview_caption(session: Session, settings: Settings, clip: ClipRow) -> str:
     if skipped:
         lines.append(f"Not used: {skipped}")
     if cand.archetype:
-        lines.append(
-            f"Moment: {cand.archetype} | reaction {cand.score_reaction}, event {cand.score_event}, "
-            f"setup {cand.score_setup}, absurdity {cand.score_absurdity}"
-        )
+        lines.append(moment_line(cand))
+        vision = vision_line(cand.vision_json)
+        if vision:
+            lines.append(vision)
     skips = [str(f) for f in cand.skip_flags or []]
     if skips:  # only penalising skip rules reach review; rejecting ones drop the candidate
         lines.append(f"Skip rules (score lowered): {', '.join(skips)}")

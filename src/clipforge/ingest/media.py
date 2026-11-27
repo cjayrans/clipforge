@@ -23,16 +23,35 @@ class MediaToolError(RuntimeError):
     """ffmpeg/ffprobe missing or failed."""
 
 
-def run(args: Sequence[str], *, timeout: float | None = 3600) -> str:
+FFPROBE_TIMEOUT_S = 300  # ffprobe reads headers only
+
+
+def run(args: Sequence[str], *, timeout: float | None = None) -> str:
+    """Run a command, return its stdout; raise MediaToolError on failure.
+
+    ffmpeg runs under the stall watchdog (ingest/watchdog.py): retried when it stops making progress for 10 min of
+    active time, killed at the enclosing stage's ceiling. Host sleep does not count. Other tools (ffprobe) get a plain
+    timeout (`timeout`, default FFPROBE_TIMEOUT_S)."""
+    from clipforge.ingest import watchdog
+
+    if args and Path(args[0]).name == "ffmpeg":
+        try:
+            code, stdout, tail = watchdog.run_watched(args)
+        except FileNotFoundError as exc:
+            raise MediaToolError(f"{args[0]} is not installed") from exc
+        if code != 0:
+            raise MediaToolError(f"{args[0]} failed (exit {code}): {tail}")
+        return stdout
+    limit = timeout if timeout is not None else FFPROBE_TIMEOUT_S
     try:
-        proc = subprocess.run(list(args), check=True, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(list(args), check=True, capture_output=True, text=True, timeout=limit)
     except FileNotFoundError as exc:
         raise MediaToolError(f"{args[0]} is not installed") from exc
     except subprocess.CalledProcessError as exc:
         tail = (exc.stderr or "").strip().splitlines()[-3:]
         raise MediaToolError(f"{args[0]} failed (exit {exc.returncode}): {' | '.join(tail)}") from exc
     except subprocess.TimeoutExpired as exc:
-        raise MediaToolError(f"{args[0]} timed out after {timeout}s") from exc
+        raise MediaToolError(f"{args[0]} timed out after {limit}s") from exc
     return proc.stdout
 
 

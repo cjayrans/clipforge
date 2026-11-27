@@ -31,7 +31,7 @@ from clipforge.ingest import alerts, media
 from clipforge.ingest.models import set_source_status
 from clipforge.schemas import SourceStatus, Transcript
 from clipforge.transcribe import audio
-from clipforge.transcribe.chunker import ChunkResult, merge_chunks, plan_chunks
+from clipforge.transcribe.chunker import CHUNK_TARGET_S, ChunkResult, merge_chunks, plan_chunks
 from clipforge.transcribe.groq_client import ChunkOutput, GroqTranscriber, TranscriberError
 from clipforge.transcribe.guard import NO_SPEECH_REASON, NO_SPEECH_WPM, is_no_speech, words_per_minute
 from clipforge.transcribe.local import LocalTranscriber, LocalUnavailable, local_fallback_enabled, local_model_name
@@ -159,11 +159,33 @@ def transcribe_source(
     if not source.local_path or not Path(source.local_path).is_file():
         raise TranscriberError(f"source {source.id} has no media file on disk")
 
+    transcript, cost = transcribe_media(
+        session, settings, source, Path(source.local_path), transcriber=transcriber, local=local, runner=runner,
+        ledger=ledger,
+    )  # fmt: skip
+    return _store(session, settings, source, transcript, cost)
+
+
+def transcribe_media(
+    session: Session,
+    settings: Settings,
+    source: SourceRow,
+    media_path: Path,
+    *,
+    transcriber: Transcriber | None = None,
+    local: Transcriber | None = None,
+    runner: media.Runner = media.run,
+    ledger: sessionmaker[Session] | None = None,
+) -> tuple[Transcript, float]:
+    """Extract audio from `media_path`, chunk it (silence-aware, 45 s overlap), transcribe and merge onto one global
+    timeline. Stores nothing and changes no status (used by `transcribe_source` and `cf source shadow-rank`).
+    Returns (transcript, API cost). Alerts and errors as in the module docstring."""
     work = work_dir(settings, source.id)
     try:
-        audio_path = audio.extract_audio(Path(source.local_path), work / "audio.mp3", runner)
+        audio_path = audio.extract_audio(media_path, work / "audio.mp3", runner)
         duration = media.probe(audio_path, runner).duration_s
-        plans = plan_chunks(duration)
+        quiet = audio.silences(audio_path, runner) if duration > CHUNK_TARGET_S else []
+        plans = plan_chunks(duration, silences=quiet)
         paths = audio.cut_chunks(audio_path, plans, work / "chunks", runner)
         chunks = [(ChunkResult(p), path) for p, path in zip(plans, paths, strict=True)]
 
@@ -189,7 +211,7 @@ def transcribe_source(
         segments=segments,
         duration_s=duration,
     )
-    return _store(session, settings, source, transcript, cost)
+    return transcript, cost
 
 
 def _store(session: Session, settings: Settings, source: SourceRow, transcript: Transcript, cost: float) -> Transcript:

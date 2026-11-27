@@ -2,6 +2,11 @@
 
 Scope: streamer-clipping campaigns (Boeshi, Dylan Page, AsianJeff etc.), where footage is a streamer's GTA 6 VOD. Evidence is launch-week only (19-24 Nov 2026), so treat it as a starting prior, not settled fact.
 
+> moments-v2 (26 Nov 2026): the starting values below (trigger+reaction gate, 2-5 s pre-roll, four scores with
+> weights 0.35/0.25/0.25/0.15) were replaced by content-first finding, a six-part rubric (hook, arc, arousal,
+> sendability, clarity, density; 0.2/0.2/0.2/0.2/0.1/0.1, `gta6-streamer-v2`) and a keyframe check. See
+> `config/moment_profiles/gta6-streamer.yaml` and docs/ARCHITECTURE.md §4.3. This page is kept as the evidence base.
+
 ## Bottom line
 Views follow a **visible human reaction to something going wrong, absurd or escalating**, not gameplay quality. Walking, driving and exploring with no event is the "boring" footage. A clip needs a trigger the viewer understands in 1-2 seconds, a reaction (face or voice), and a cut right after the payoff.
 

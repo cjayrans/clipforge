@@ -52,6 +52,9 @@ class Secrets(BaseSettings):
     telegram_bot_token: SecretStr | None = None
     telegram_owner_chat_id: int | None = None
     youtube_api_key: SecretStr | None = None
+    # moments-v2: Twitch Helix app credentials, only to look up recent VODs to propose (never to download)
+    twitch_client_id: SecretStr | None = None
+    twitch_client_secret: SecretStr | None = None
 
     def secret_values(self) -> list[str]:
         """Non-empty secret strings, for the log redaction filter. Never print the result."""
@@ -223,6 +226,9 @@ class AppConfig(_Strict):
     models: ModelsConfig
     prices: dict[str, Price]
     monthly_api_cap_usd: float = Field(ge=0)
+    # moments-v2: spend guard per source (download -> rank of one VOD), and free disk needed before a download.
+    per_source_cap_usd: float = Field(default=1.50, gt=0)
+    min_free_gb: float = Field(default=15.0, ge=0)
     campaign_filter: CampaignFilter
     youtube: YoutubeConfig
     retention: RetentionConfig

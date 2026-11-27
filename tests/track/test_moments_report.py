@@ -104,3 +104,79 @@ def test_preview_shows_the_moment_and_the_manual_check(factory: Factory, session
     plain = factory.clip(factory.candidate(hook="talk"))
     assert "Moment:" not in preview_caption(session, settings, plain)
     assert "CHECK" not in preview_caption(session, settings, plain)
+
+
+# --- moments-v2: viewer-response metrics and rubric correlations ---------------------------------------
+
+
+def v2_post(factory: Factory, session: Session, scores: dict[str, int], **kw: Any) -> PostRow:
+    post = moment_post(factory, session, kw.pop("archetype", "blunder"), **kw)
+    clip = session.get(ClipRow, post.clip_id)
+    cand = session.get(CandidateRow, clip.candidate_id)
+    cand.weights_version = "gta6-streamer-v2"
+    cand.scores_json = scores
+    session.flush()
+    return post
+
+
+def test_post_metrics_are_stored_and_logged(factory: Factory, session: Session, settings: Settings) -> None:
+    import pytest
+    from sqlalchemy import select
+
+    from clipforge.db import EventRow
+    from clipforge.track.moments import MetricsError, set_post_metrics
+
+    post = v2_post(factory, session, {"hook": 7})
+    text = set_post_metrics(session, settings, post.id, watch_time_s=11.5, completion=42, shares=30, likes=400)
+    assert post.completion_rate == 0.42  # a percentage becomes 0-1
+    assert (post.avg_watch_time_s, post.shares, post.likes) == (11.5, 30, 400)
+    assert post.metrics_at is not None
+    assert "completion_rate=0.42" in text
+    event = session.scalars(select(EventRow).where(EventRow.entity == "post")).all()[-1]
+    assert event.actor == "operator"
+    assert "metrics" in event.detail
+    set_post_metrics(session, settings, post.id, completion=0.5)
+    assert post.completion_rate == 0.5
+    assert post.shares == 30  # untouched
+    with pytest.raises(MetricsError, match="at least one"):
+        set_post_metrics(session, settings, post.id)
+    with pytest.raises(MetricsError, match="not found"):
+        set_post_metrics(session, settings, 99_999, likes=1)
+
+
+def test_spearman() -> None:
+    from clipforge.track.moments import spearman
+
+    assert spearman([1, 2, 3, 4], [10, 20, 30, 40]) == 1.0
+    assert spearman([1, 2, 3, 4], [4, 3, 2, 1]) == -1.0
+    assert spearman([1, 1, 1], [1, 2, 3]) is None  # no spread
+    assert spearman([1, 2], [1, 2]) is None  # too few
+
+
+def test_correlations_appear_from_20_posts(factory: Factory, session: Session, settings: Settings) -> None:
+    from clipforge.track.moments import render_correlations, response_points, set_post_metrics
+
+    posts = []
+    for k in range(19):
+        scores = {"hook": k % 10, "arc": 5, "arousal": (k * 3) % 10, "sendability": 9 - k % 10, "clarity": 5,
+                  "density": 4}  # fmt: skip
+        platform = Platform.TIKTOK if k % 2 else Platform.INSTAGRAM
+        post = v2_post(factory, session, scores, platform=platform, archetype="blunder" if k % 3 else "glitch")
+        set_post_metrics(session, settings, post.id, completion=(k % 10) / 10, shares=k, views_72h=1000)
+        posts.append(post)
+    text = render_correlations(response_points(session))
+    assert "19 of 20 posts" in text
+    post = v2_post(factory, session, {"hook": 9, "arc": 5, "arousal": 1, "sendability": 0, "clarity": 5, "density": 4})
+    set_post_metrics(session, settings, post.id, completion=0.95, shares=50, views_72h=1000)
+    text = render_correlations(response_points(session))
+    assert "Spearman" in text
+    assert "completion rate:" in text
+    assert "shares per view:" in text
+    assert "archetype blunder" in text
+    assert "archetype glitch" in text
+    assert "platform tiktok" in text
+    assert "platform instagram" in text
+    all_line = next(line for line in text.splitlines() if line.startswith("all posts"))
+    assert "+1.00" in all_line  # hook tracks completion exactly here
+    full = moments_report(session, settings)
+    assert "Rubric score vs viewer response" in full

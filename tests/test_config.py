@@ -42,6 +42,8 @@ def test_secret_env_var_names() -> None:
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_OWNER_CHAT_ID",
         "YOUTUBE_API_KEY",
+        "TWITCH_CLIENT_ID",
+        "TWITCH_CLIENT_SECRET",
     }
 
 
