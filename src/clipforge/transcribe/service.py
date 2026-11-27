@@ -31,7 +31,7 @@ from clipforge.ingest import alerts, media
 from clipforge.ingest.models import set_source_status
 from clipforge.schemas import SourceStatus, Transcript
 from clipforge.transcribe import audio
-from clipforge.transcribe.chunker import ChunkResult, merge_chunks, plan_chunks
+from clipforge.transcribe.chunker import CHUNK_TARGET_S, ChunkResult, merge_chunks, plan_chunks
 from clipforge.transcribe.groq_client import ChunkOutput, GroqTranscriber, TranscriberError
 from clipforge.transcribe.guard import NO_SPEECH_REASON, NO_SPEECH_WPM, is_no_speech, words_per_minute
 from clipforge.transcribe.local import LocalTranscriber, LocalUnavailable, local_fallback_enabled, local_model_name
@@ -163,7 +163,8 @@ def transcribe_source(
     try:
         audio_path = audio.extract_audio(Path(source.local_path), work / "audio.mp3", runner)
         duration = media.probe(audio_path, runner).duration_s
-        plans = plan_chunks(duration)
+        quiet = audio.silences(audio_path, runner) if duration > CHUNK_TARGET_S else []
+        plans = plan_chunks(duration, silences=quiet)
         paths = audio.cut_chunks(audio_path, plans, work / "chunks", runner)
         chunks = [(ChunkResult(p), path) for p, path in zip(plans, paths, strict=True)]
 

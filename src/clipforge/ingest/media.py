@@ -23,7 +23,12 @@ class MediaToolError(RuntimeError):
     """ffmpeg/ffprobe missing or failed."""
 
 
-def run(args: Sequence[str], *, timeout: float | None = 3600) -> str:
+# Whole-file passes over a full-length VOD (audio extraction, loudness, motion, silences) can take a long time on a
+# CPU-only box; the timeout only stops a hung tool (moments-v2: was 1 h, too short for 8 h+ VODs).
+RUN_TIMEOUT_S = 4 * 3600
+
+
+def run(args: Sequence[str], *, timeout: float | None = RUN_TIMEOUT_S) -> str:
     try:
         proc = subprocess.run(list(args), check=True, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as exc:

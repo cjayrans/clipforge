@@ -206,7 +206,9 @@ def test_transcribe_source_single_chunk(session: Session, settings: Settings, fa
 def test_transcribe_source_multi_chunk(
     session: Session, settings: Settings, factory: Factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(service, "plan_chunks", lambda d: chunker.plan_chunks(d, max_bytes=200_000))  # 45 s chunks
+    monkeypatch.setattr(
+        service, "plan_chunks", lambda d, **kw: chunker.plan_chunks(d, max_bytes=200_000, overlap_s=2.0, **kw)
+    )  # 45 s chunks
     src = downloaded_source(factory, settings, 200.0)
     fake = FakeTranscriber()
     t = service.transcribe_source(session, settings, src, transcriber=fake, runner=fake_runner(200.0))

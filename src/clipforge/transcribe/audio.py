@@ -6,12 +6,16 @@ without ffmpeg. Only the first audio stream of the source is used.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from clipforge.ingest import media
-from clipforge.transcribe.chunker import AUDIO_BITRATE_BPS, ChunkPlan
+from clipforge.transcribe.chunker import AUDIO_BITRATE_BPS, ChunkPlan, Silence
 
 SAMPLE_RATE = 16_000
+SILENCE_NOISE_DB = -35
+SILENCE_MIN_S = 0.4
+_SILENCE_RE = re.compile(r"lavfi\.silence_(start|end)=(-?[\d.]+)")
 
 
 def extract_audio_args(src: Path | str, out: Path | str) -> list[str]:
@@ -81,3 +85,35 @@ def cut_chunks(audio: Path, plans: list[ChunkPlan], out_dir: Path, runner: media
         runner(chunk_args(audio, plan, out))
         paths.append(out)
     return paths
+
+
+def silence_args(audio: Path | str) -> list[str]:
+    """One pass over the extracted audio: silencedetect, printed to stdout (`ametadata`)."""
+    return [
+        "ffmpeg", "-nostdin", "-v", "error", "-i", str(audio),
+        "-af", f"silencedetect=noise={SILENCE_NOISE_DB}dB:d={SILENCE_MIN_S},ametadata=mode=print:file=-",
+        "-f", "null", "-",
+    ]  # fmt: skip
+
+
+def parse_silences(stdout: str) -> list[Silence]:
+    """Pure: (start, end) pairs from `silence_args` output (an open silence at the end of the file is dropped)."""
+    out: list[Silence] = []
+    start: float | None = None
+    for kind, value in _SILENCE_RE.findall(stdout):
+        t = max(float(value), 0.0)
+        if kind == "start":
+            start = t
+        elif start is not None:
+            if t > start:
+                out.append((start, t))
+            start = None
+    return out
+
+
+def silences(audio: Path, runner: media.Runner = media.run) -> list[Silence]:
+    """Silences of the extracted audio; [] if the pass fails (chunks are then cut at fixed points)."""
+    try:
+        return parse_silences(runner(silence_args(audio)))
+    except media.MediaToolError:
+        return []
